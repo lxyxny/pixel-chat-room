@@ -9,29 +9,93 @@
 </head>
 <body>
   <div class="pixel-container">
-    <div id="login-screen" class="screen active">
+    
+    <!-- START MENU -->
+    <div id="start-screen" class="screen active">
       <h1 class="pixel-title">PIXEL CHAT</h1>
+      <div class="pixel-box start-menu">
+        <button id="join-room-btn" class="pixel-btn">🚪 JOIN ROOM</button>
+        <button id="host-room-btn" class="pixel-btn">🏠 HOST ROOM</button>
+        <button id="customize-btn" class="pixel-btn">🎨 CUSTOMIZE</button>
+      </div>
+      <p class="pixel-hint">Choose your adventure!</p>
+      <p class="pixel-hint" id="ngrok-url" style="color: var(--pixel-accent); font-size: 7px;"></p>
+    </div>
+
+    <!-- JOIN/HOST ROOM SCREEN -->
+    <div id="room-screen" class="screen">
+      <h1 class="pixel-title" id="room-title">JOIN ROOM</h1>
       <div class="pixel-box">
         <input type="text" id="username-input" placeholder="ENTER NAME..." maxlength="12" autocomplete="off"/>
         <input type="text" id="room-input" placeholder="ROOM CODE..." maxlength="16" autocomplete="off"/>
-        <button id="join-btn" class="pixel-btn">▶ JOIN</button>
+        <button id="enter-room-btn" class="pixel-btn">▶ ENTER</button>
+        <button id="back-to-start-btn" class="pixel-btn">↩ BACK</button>
       </div>
       <p class="pixel-hint">Press ENTER to join</p>
     </div>
 
+    <!-- CUSTOMIZE SCREEN -->
+    <div id="customize-screen" class="screen">
+      <h1 class="pixel-title">CUSTOMIZE</h1>
+      <div class="pixel-box customize-box">
+        <div class="customize-section">
+          <h3 class="pixel-label">NAME COLOR</h3>
+          <input type="color" id="name-color-picker" value="#4cc9f0" />
+          <div class="color-preview" id="name-color-preview"></div>
+        </div>
+        
+        <div class="customize-section">
+          <h3 class="pixel-label">BUTTON COLOR</h3>
+          <input type="color" id="button-color-picker" value="#e94560" />
+          <div class="color-preview" id="button-color-preview"></div>
+        </div>
+        
+        <div class="customize-section">
+          <h3 class="pixel-label">BACKGROUND COLOR</h3>
+          <input type="color" id="bg-color-picker" value="#1a1a2e" />
+          <div class="color-preview" id="bg-color-preview"></div>
+        </div>
+        
+        <div class="customize-section">
+          <h3 class="pixel-label">PANEL COLOR</h3>
+          <input type="color" id="panel-color-picker" value="#16213e" />
+          <div class="color-preview" id="panel-color-preview"></div>
+        </div>
+        
+        <button id="save-colors-btn" class="pixel-btn">💾 SAVE</button>
+        <button id="reset-colors-btn" class="pixel-btn">🔄 RESET</button>
+        <button id="back-to-start-customize-btn" class="pixel-btn">↩ BACK</button>
+      </div>
+    </div>
+
+    <!-- CHAT SCREEN -->
     <div id="chat-screen" class="screen">
       <div class="chat-header">
         <h2 class="pixel-subtitle">ROOM: <span id="room-display">---</span></h2>
-        <button id="leave-btn" class="pixel-btn small">✕ LEAVE</button>
+        <div class="header-actions">
+          <span id="host-badge" class="host-badge hidden">👑 HOST</span>
+          <button id="sound-toggle" class="pixel-btn small" title="Toggle Sound">🔊</button>
+          <span id="typing-indicator" class="typing-indicator hidden"></span>
+          <button id="leave-btn" class="pixel-btn small">✕ LEAVE</button>
+        </div>
       </div>
       
       <div class="chat-layout">
         <div class="messages-panel">
           <div id="messages" class="pixel-messages"></div>
+          
+          <div id="reply-preview" class="reply-preview hidden">
+            <span>REPLYING TO: <strong id="reply-username"></strong></span>
+            <button id="cancel-reply" class="pixel-btn tiny">✕</button>
+          </div>
+          
           <div class="input-area">
-            <input type="text" id="message-input" placeholder="TYPE MESSAGE..." maxlength="200" autocomplete="off"/>
+            <label for="image-upload" class="pixel-btn icon-btn" title="Upload Image/GIF (Max 50MB)">🖼️</label>
+            <input type="file" id="image-upload" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" hidden />
+            <input type="text" id="message-input" placeholder="TYPE MESSAGE..." maxlength="500" autocomplete="off"/>
             <button id="send-btn" class="pixel-btn">▶ SEND</button>
           </div>
+          <p class="pixel-hint">💡 Paste image (Ctrl+V) or double-click message to reply | 📸 Max: 50MB (PNG, JPG, GIF, WebP)</p>
         </div>
         
         <div class="users-panel">
@@ -40,8 +104,55 @@
         </div>
       </div>
     </div>
+
   </div>
 
+  <script>
+    // Load saved colors
+    const savedColors = localStorage.getItem('pixelChatColors');
+    if (savedColors) {
+      const colors = JSON.parse(savedColors);
+      document.documentElement.style.setProperty('--pixel-success', colors.nameColor || '#4cc9f0');
+      document.documentElement.style.setProperty('--pixel-accent', colors.buttonColor || '#e94560');
+      document.documentElement.style.setProperty('--pixel-bg', colors.bgColor || '#1a1a2e');
+      document.documentElement.style.setProperty('--pixel-panel', colors.panelColor || '#16213e');
+    }
+    
+    // Show ngrok URL if available
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      const ngrokEl = document.getElementById('ngrok-url');
+      if (ngrokEl) {
+        ngrokEl.textContent = `🌐 Share: ${window.location.origin}`;
+      }
+    }
+    
+    // Initialize audio
+    window.audioContext = null;
+    window.audioEnabled = false;
+    
+    document.addEventListener('click', () => {
+      if (!window.audioContext) {
+        try {
+          window.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          window.audioEnabled = true;
+        } catch(e) {
+          console.warn('Audio not supported');
+        }
+      }
+    }, { once: true });
+    
+    document.addEventListener('keydown', () => {
+      if (!window.audioContext) {
+        try {
+          window.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          window.audioEnabled = true;
+        } catch(e) {
+          console.warn('Audio not supported');
+        }
+      }
+    }, { once: true });
+  </script>
+  
   <script src="/socket.io/socket.io.js"></script>
   <script src="client.js"></script>
 </body>

@@ -1,32 +1,225 @@
 const socket = io();
 
-// DOM Elements
-const loginScreen = document.getElementById('login-screen');
-const chatScreen = document.getElementById('chat-screen');
+// DOM Elements - Start Menu
+const startScreen = document.getElementById('start-screen');
+const joinRoomBtn = document.getElementById('join-room-btn');
+const hostRoomBtn = document.getElementById('host-room-btn');
+const customizeBtn = document.getElementById('customize-btn');
+const ngrokUrlEl = document.getElementById('ngrok-url');
+
+// DOM Elements - Room Screen
+const roomScreen = document.getElementById('room-screen');
+const roomTitle = document.getElementById('room-title');
 const usernameInput = document.getElementById('username-input');
 const roomInput = document.getElementById('room-input');
-const joinBtn = document.getElementById('join-btn');
+const enterRoomBtn = document.getElementById('enter-room-btn');
+const backToStartBtn = document.getElementById('back-to-start-btn');
+
+// DOM Elements - Customize Screen
+const customizeScreen = document.getElementById('customize-screen');
+const nameColorPicker = document.getElementById('name-color-picker');
+const buttonColorPicker = document.getElementById('button-color-picker');
+const bgColorPicker = document.getElementById('bg-color-picker');
+const panelColorPicker = document.getElementById('panel-color-picker');
+const nameColorPreview = document.getElementById('name-color-preview');
+const buttonColorPreview = document.getElementById('button-color-preview');
+const bgColorPreview = document.getElementById('bg-color-preview');
+const panelColorPreview = document.getElementById('panel-color-preview');
+const saveColorsBtn = document.getElementById('save-colors-btn');
+const resetColorsBtn = document.getElementById('reset-colors-btn');
+const backToStartCustomizeBtn = document.getElementById('back-to-start-customize-btn');
+
+// DOM Elements - Chat Screen
+const chatScreen = document.getElementById('chat-screen');
 const leaveBtn = document.getElementById('leave-btn');
 const roomDisplay = document.getElementById('room-display');
 const messagesEl = document.getElementById('messages');
 const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
 const userListEl = document.getElementById('user-list');
+const imageUpload = document.getElementById('image-upload');
+const replyPreview = document.getElementById('reply-preview');
+const replyUsernameEl = document.getElementById('reply-username');
+const cancelReplyBtn = document.getElementById('cancel-reply');
+const typingIndicator = document.getElementById('typing-indicator');
+const soundToggleBtn = document.getElementById('sound-toggle');
+const hostBadge = document.getElementById('host-badge');
 
 let currentRoom = null;
 let myUsername = null;
+let mySocketId = null;
+let isHost = false;
+let pendingReply = null;
+let pendingImage = null;
+let isTyping = false;
+let typingTimer = null;
 
-// ===== LOGIN FLOW =====
+// Show ngrok URL in chat header for easy sharing
+function showShareURL() {
+  if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    const shareMsg = `🌐 Share this link: ${window.location.origin}`;
+    console.log(shareMsg);
+  }
+}
+
+// ===== 🔊 SOUND SYSTEM =====
+function initAudio() {
+  if (window.audioContext) return;
+  
+  try {
+    window.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    window.audioEnabled = true;
+    console.log('🔊 Audio enabled');
+  } catch (e) {
+    console.warn('⚠️ Audio not supported:', e);
+    window.audioEnabled = false;
+  }
+}
+
+function playSound(type) {
+  if (!window.audioEnabled || !window.audioContext) return;
+  
+  if (window.audioContext.state === 'suspended') {
+    window.audioContext.resume();
+  }
+  
+  const ctx = window.audioContext;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  
+  const now = ctx.currentTime;
+  
+  switch(type) {
+    case 'send':
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(523.25, now);
+      osc.frequency.setValueAtTime(783.99, now + 0.05);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+      osc.start(now);
+      osc.stop(now + 0.15);
+      break;
+    case 'receive':
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(659.25, now);
+      osc.frequency.setValueAtTime(523.25, now + 0.05);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+      osc.start(now);
+      osc.stop(now + 0.12);
+      break;
+    case 'join':
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(392, now);
+      osc.frequency.setValueAtTime(523.25, now + 0.1);
+      osc.frequency.setValueAtTime(783.99, now + 0.2);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      osc.start(now);
+      osc.stop(now + 0.3);
+      break;
+    case 'error':
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(150, now);
+      osc.frequency.linearRampToValueAtTime(100, now + 0.15);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+      osc.start(now);
+      osc.stop(now + 0.2);
+      break;
+  }
+}
+
+if (soundToggleBtn) {
+  soundToggleBtn.addEventListener('click', () => {
+    initAudio();
+    window.audioEnabled = !window.audioEnabled;
+    soundToggleBtn.textContent = window.audioEnabled ? '🔊' : '🔇';
+    soundToggleBtn.title = window.audioEnabled ? 'Sound ON' : 'Sound OFF';
+    addSystemMessage(window.audioEnabled ? '🔊 Sound ENABLED' : '🔇 Sound DISABLED');
+  });
+}
+
+// ===== PARTICLE EFFECT =====
+function createParticles(x, y, count = 8) {
+  for (let i = 0; i < count; i++) {
+    const particle = document.createElement('div');
+    particle.className = 'particle';
+    
+    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+    const distance = 30 + Math.random() * 40;
+    const tx = Math.cos(angle) * distance;
+    const ty = Math.sin(angle) * distance - 20;
+    
+    particle.style.setProperty('--tx', `${tx}px`);
+    particle.style.setProperty('--ty', `${ty}px`);
+    particle.style.left = `${x}px`;
+    particle.style.top = `${y}px`;
+    
+    if (Math.random() > 0.7) {
+      particle.style.background = '#4cc9f0';
+      particle.style.borderColor = '#0f3460';
+    }
+    
+    document.body.appendChild(particle);
+    setTimeout(() => particle.remove(), 600);
+  }
+}
+
+// ===== SCREEN NAVIGATION =====
 function showScreen(screen) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   screen.classList.add('active');
 }
 
-joinBtn.addEventListener('click', attemptJoin);
-roomInput.addEventListener('keypress', (e) => { if(e.key==='Enter') attemptJoin(); });
-usernameInput.addEventListener('keypress', (e) => { if(e.key==='Enter') usernameInput.blur(); roomInput.focus(); });
+joinRoomBtn.addEventListener('click', () => {
+  initAudio();
+  roomTitle.textContent = 'JOIN ROOM';
+  showScreen(roomScreen);
+  usernameInput.focus();
+});
 
-function attemptJoin() {
+hostRoomBtn.addEventListener('click', () => {
+  initAudio();
+  roomTitle.textContent = 'HOST ROOM';
+  showScreen(roomScreen);
+  usernameInput.focus();
+});
+
+customizeBtn.addEventListener('click', () => {
+  initAudio();
+  loadColorPreviews();
+  showScreen(customizeScreen);
+});
+
+enterRoomBtn.addEventListener('click', () => {
+  initAudio();
+  attemptEnterRoom();
+});
+
+backToStartBtn.addEventListener('click', () => {
+  showScreen(startScreen);
+  usernameInput.value = '';
+  roomInput.value = '';
+});
+
+roomInput.addEventListener('keypress', (e) => { 
+  initAudio();
+  if(e.key==='Enter') attemptEnterRoom(); 
+});
+
+usernameInput.addEventListener('keypress', (e) => { 
+  initAudio();
+  if(e.key==='Enter') { 
+    usernameInput.blur(); 
+    roomInput.focus(); 
+  } 
+});
+
+function attemptEnterRoom() {
   const username = usernameInput.value.trim().toUpperCase() || 'GUEST' + Math.floor(Math.random()*999);
   const room = roomInput.value.trim().toUpperCase() || 'LOBBY';
   
@@ -35,22 +228,277 @@ function attemptJoin() {
   
   myUsername = username;
   currentRoom = room;
+  isHost = roomTitle.textContent.includes('HOST');
   
-  socket.emit('joinRoom', { roomName: room, username });
+  socket.emit('joinRoom', { roomName: room, username, isHost });
+  playSound('join');
+  showShareURL();
+}
+
+// Customize Screen
+function loadColorPreviews() {
+  nameColorPreview.style.background = nameColorPicker.value;
+  buttonColorPreview.style.background = buttonColorPicker.value;
+  bgColorPreview.style.background = bgColorPicker.value;
+  panelColorPreview.style.background = panelColorPicker.value;
+}
+
+nameColorPicker.addEventListener('input', () => {
+  nameColorPreview.style.background = nameColorPicker.value;
+  document.documentElement.style.setProperty('--pixel-success', nameColorPicker.value);
+});
+
+buttonColorPicker.addEventListener('input', () => {
+  buttonColorPreview.style.background = buttonColorPicker.value;
+  document.documentElement.style.setProperty('--pixel-accent', buttonColorPicker.value);
+});
+
+bgColorPicker.addEventListener('input', () => {
+  bgColorPreview.style.background = bgColorPicker.value;
+  document.documentElement.style.setProperty('--pixel-bg', bgColorPicker.value);
+});
+
+panelColorPicker.addEventListener('input', () => {
+  panelColorPreview.style.background = panelColorPicker.value;
+  document.documentElement.style.setProperty('--pixel-panel', panelColorPicker.value);
+});
+
+saveColorsBtn.addEventListener('click', () => {
+  const colors = {
+    nameColor: nameColorPicker.value,
+    buttonColor: buttonColorPicker.value,
+    bgColor: bgColorPicker.value,
+    panelColor: panelColorPicker.value
+  };
+  localStorage.setItem('pixelChatColors', JSON.stringify(colors));
+  addSystemMessage('💾 Colors saved!');
+  playSound('send');
+});
+
+resetColorsBtn.addEventListener('click', () => {
+  nameColorPicker.value = '#4cc9f0';
+  buttonColorPicker.value = '#e94560';
+  bgColorPicker.value = '#1a1a2e';
+  panelColorPicker.value = '#16213e';
+  loadColorPreviews();
+  
+  document.documentElement.style.setProperty('--pixel-success', '#4cc9f0');
+  document.documentElement.style.setProperty('--pixel-accent', '#e94560');
+  document.documentElement.style.setProperty('--pixel-bg', '#1a1a2e');
+  document.documentElement.style.setProperty('--pixel-panel', '#16213e');
+  
+  localStorage.removeItem('pixelChatColors');
+  addSystemMessage('🔄 Colors reset!');
+  playSound('send');
+});
+
+backToStartCustomizeBtn.addEventListener('click', () => {
+  showScreen(startScreen);
+});
+
+// ===== CHAT SCREEN =====
+leaveBtn.addEventListener('click', () => {
+  if (currentRoom) {
+    addSystemMessage('🔌 Disconnected');
+    showScreen(startScreen);
+    currentRoom = null;
+    messagesEl.innerHTML = '';
+    userListEl.innerHTML = '';
+    clearReply();
+    clearImagePreview();
+    hostBadge.classList.add('hidden');
+  }
+});
+
+sendBtn.addEventListener('click', () => {
+  initAudio();
+  sendMessage();
+});
+
+messageInput.addEventListener('keypress', (e) => { 
+  initAudio();
+  if(e.key==='Enter') sendMessage(); 
+});
+
+messageInput.addEventListener('input', () => {
+  if (!currentRoom || !myUsername) return;
+  
+  if (!isTyping) {
+    isTyping = true;
+    socket.emit('typing', { roomName: currentRoom, username: myUsername, isTyping: true });
+  }
+  
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => {
+    isTyping = false;
+    socket.emit('typing', { roomName: currentRoom, username: myUsername, isTyping: false });
+  }, 1000);
+});
+
+function sendMessage() {
+  const message = messageInput.value.trim();
+  const image = pendingImage || null;
+  
+  if (!message && !image) {
+    addSystemMessage('⚠️ Type a message or attach an image');
+    return;
+  }
+  if (!currentRoom || !myUsername) return;
+  
+  const messageData = {
+    roomName: currentRoom,
+    username: myUsername,
+    message,
+    image,
+    replyTo: pendingReply
+  };
+  
+  socket.emit('chatMessage', messageData);
+  
+  const localData = {
+    ...messageData,
+    id: Date.now() + '-local',
+    timestamp: new Date().toLocaleTimeString(),
+    senderId: socket.id
+  };
+  addMessage(localData, true);
+  
+  messageInput.value = '';
+  clearImagePreview();
+  clearReply();
+  
+  if (isTyping) {
+    isTyping = false;
+    socket.emit('typing', { roomName: currentRoom, username: myUsername, isTyping: false });
+  }
+  
+  playSound('send');
+  const rect = sendBtn.getBoundingClientRect();
+  createParticles(rect.left + rect.width/2, rect.top, 10);
+  
+  scrollToBottom();
+}
+
+// ===== IMAGE UPLOAD =====
+imageUpload.addEventListener('change', (e) => {
+  initAudio();
+  const file = e.target.files[0];
+  if (file) handleImageFile(file);
+  imageUpload.value = '';
+});
+
+document.addEventListener('paste', (e) => {
+  if (!currentRoom || document.activeElement !== messageInput) return;
+  
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  
+  for (let item of items) {
+    if (item.type?.startsWith('image/')) {
+      e.preventDefault();
+      const file = item.getAsFile();
+      handleImageFile(file);
+      break;
+    }
+  }
+});
+
+function handleImageFile(file) {
+  const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+  
+  if (!validTypes.includes(file.type)) {
+    addSystemMessage('⚠️ Only PNG, JPG, GIF, WebP images allowed');
+    playSound('error');
+    return;
+  }
+  
+  // 50MB limit
+  if (file.size > 50 * 1024 * 1024) {
+    addSystemMessage('⚠️ Image too large (max 50MB). For larger files, use cloud storage.');
+    playSound('error');
+    return;
+  }
+  
+  addSystemMessage(`🔄 Uploading: ${file.name.slice(0,20)}... (${(file.size/1024/1024).toFixed(2)}MB)`);
+  
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    pendingImage = e.target.result;
+    console.log('✅ Image loaded, size:', (pendingImage.length/1024/1024).toFixed(2), 'MB');
+    
+    const isGif = file.type === 'image/gif';
+    addSystemMessage(`🖼️ ${isGif ? '🎬 GIF' : 'Image'} ready: ${file.name.slice(0,20)}...`);
+    messageInput.placeholder = 'Add caption (optional)...';
+    messageInput.focus();
+  };
+  reader.onerror = () => {
+    addSystemMessage('⚠️ Failed to read image');
+    playSound('error');
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearImagePreview() {
+  pendingImage = null;
+  messageInput.placeholder = 'TYPE MESSAGE...';
+}
+
+// ===== REPLY SYSTEM =====
+messagesEl.addEventListener('dblclick', (e) => {
+  initAudio();
+  const messageEl = e.target.closest('.message');
+  if (!messageEl || messageEl.classList.contains('system')) return;
+  
+  const msgId = messageEl.dataset.id;
+  const username = messageEl.dataset.username;
+  const text = messageEl.dataset.text;
+  
+  if (!msgId || !username) return;
+  
+  pendingReply = { id: msgId, username, text: text?.slice(0, 100) || '' };
+  
+  replyUsernameEl.textContent = username;
+  replyPreview.classList.remove('hidden');
+  messageInput.focus();
+  
+  document.querySelectorAll('.message').forEach(m => m.classList.remove('reply-target'));
+  messageEl.classList.add('reply-target');
+  setTimeout(() => messageEl.classList.remove('reply-target'), 1000);
+});
+
+cancelReplyBtn.addEventListener('click', clearReply);
+
+function clearReply() {
+  pendingReply = null;
+  replyPreview.classList.add('hidden');
+  replyUsernameEl.textContent = '';
 }
 
 // ===== SOCKET EVENTS =====
-socket.on('joinedRoom', ({ roomName, users }) => {
+socket.on('joinedRoom', ({ roomName, users, socketId, isHost: hostStatus }) => {
+  mySocketId = socketId;
+  isHost = hostStatus;
   roomDisplay.textContent = roomName;
   updateUserList(users);
   showScreen(chatScreen);
-  addSystemMessage(`🎮 Connected to ${roomName}`);
+  addSystemMessage(`🎮 Connected to ${roomName}${isHost ? ' (HOST)' : ''}`);
+  
+  if (isHost) {
+    hostBadge.classList.remove('hidden');
+  }
+  
   messageInput.focus();
+  playSound('join');
+  showShareURL();
 });
 
-socket.on('chatMessage', ({ username, message, timestamp, isSelf }) => {
-  addMessage(username, message, timestamp, false);
+socket.on('chatMessage', (data) => {
+  addMessage(data, false);
   scrollToBottom();
+  playSound('receive');
+  
+  const rect = messagesEl.getBoundingClientRect();
+  createParticles(rect.right - 20, rect.bottom - 50, 5);
 });
 
 socket.on('systemMessage', ({ text, timestamp }) => {
@@ -62,71 +510,89 @@ socket.on('updateUsers', (users) => {
   updateUserList(users);
 });
 
-// ===== LEAVE ROOM =====
-leaveBtn.addEventListener('click', () => {
-  if (currentRoom) {
-    socket.emit('leaveRoom', currentRoom); // Optional: implement on server
-    addSystemMessage('🔌 Disconnected');
-    showScreen(loginScreen);
-    currentRoom = null;
-    messagesEl.innerHTML = '';
-    userListEl.innerHTML = '';
+socket.on('userTyping', ({ username, isTyping }) => {
+  if (isTyping && username !== myUsername) {
+    typingIndicator.textContent = username;
+    typingIndicator.classList.remove('hidden');
+    setTimeout(() => {
+      typingIndicator.classList.add('hidden');
+    }, 2000);
+  } else if (username !== myUsername) {
+    typingIndicator.classList.add('hidden');
   }
 });
 
-// ===== SEND MESSAGE =====
-sendBtn.addEventListener('click', sendMessage);
-messageInput.addEventListener('keypress', (e) => { if(e.key==='Enter') sendMessage(); });
-
-function sendMessage() {
-  const message = messageInput.value.trim();
-  if (!message || !currentRoom || !myUsername) return;
-  
-  // Send to server
-  socket.emit('chatMessage', {
-    roomName: currentRoom,
-    username: myUsername,
-    message
-  });
-  
-  // In client.js, after message sends:
-const snd = new Audio('/sounds/pixel-send.wav');
-snd.volume = 0.3;
-snd.play().catch(() => {}); // Ignore autoplay restrictions
-  // Display locally immediately (optimistic UI)
-  addMessage(myUsername, message, new Date().toLocaleTimeString(), true);
-  messageInput.value = '';
-  scrollToBottom();
-}
+socket.on('error', (msg) => {
+  addSystemMessage(msg);
+  playSound('error');
+});
 
 // ===== UI HELPERS =====
-function addMessage(username, text, timestamp, isSelf) {
+function addMessage(data, isSelf) {
   const msgEl = document.createElement('div');
-  msgEl.className = 'message' + (isSelf ? ' self' : '');
+  msgEl.className = 'message new';
+  msgEl.dataset.id = data.id;
+  msgEl.dataset.username = data.username;
+  msgEl.dataset.text = data.message;
+  
+  setTimeout(() => msgEl.classList.remove('new'), 500);
+  
+  if (data.senderId === socket.id) {
+    msgEl.classList.add('self');
+    msgEl.style.borderColor = 'var(--pixel-accent)';
+  }
+  
+  let content = '';
+  
+  if (data.replyTo) {
+    content += `
+      <div class="quoted-message">
+        <span class="username">@${escapeHtml(data.replyTo.username)}</span>
+        <span class="text">${escapeHtml(data.replyTo.text)}</span>
+      </div>
+    `;
+  }
+  
+  if (data.image) {
+    const isGif = data.image.includes('image/gif');
+    content += `
+      <div class="image-container ${isGif ? 'gif' : ''}" onclick="openLightbox(this)">
+        <img src="${escapeHtml(data.image)}" alt="shared image" loading="lazy"/>
+        <div class="image-overlay">${isGif ? '🎬 GIF' : '[ CLICK TO ZOOM ]'}</div>
+      </div>
+    `;
+  }
+  
+  if (data.message) {
+    content += `<span class="text">${escapeHtml(data.message)}</span>`;
+  }
+  
   msgEl.innerHTML = `
     <span class="meta">
-      <span class="username">${escapeHtml(username)}</span> 
-      <span class="time">[${timestamp}]</span>
+      <span class="username">${escapeHtml(data.username)}</span> 
+      <span class="time">[${data.timestamp}]</span>
     </span>
-    <span class="text">${escapeHtml(text)}</span>
+    ${content}
   `;
-  if (isSelf) msgEl.style.borderColor = 'var(--pixel-accent)';
+  
   messagesEl.appendChild(msgEl);
 }
 
 function addSystemMessage(text) {
   const msgEl = document.createElement('div');
-  msgEl.className = 'message system';
+  msgEl.className = 'message system new';
+  setTimeout(() => msgEl.classList.remove('new'), 500);
   msgEl.innerHTML = `<span class="text">${escapeHtml(text)}</span>`;
   messagesEl.appendChild(msgEl);
 }
 
 function updateUserList(users) {
   userListEl.innerHTML = '';
-  users.forEach(username => {
+  users.forEach(user => {
     const li = document.createElement('li');
-    li.textContent = username;
-    if (username === myUsername) li.classList.add('you');
+    li.textContent = user.username;
+    if (user.username === myUsername) li.classList.add('you');
+    if (user.isHost) li.classList.add('host');
     userListEl.appendChild(li);
   });
 }
@@ -136,10 +602,46 @@ function scrollToBottom() {
 }
 
 function escapeHtml(str) {
+  if (!str) return '';
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
 }
 
-// Auto-focus helpers
+// ===== LIGHTBOX FOR IMAGES =====
+window.openLightbox = function(container) {
+  const img = container.querySelector('img');
+  if (!img) return;
+  
+  const lightbox = document.createElement('div');
+  lightbox.className = 'lightbox';
+  lightbox.innerHTML = `<img src="${img.src}" alt="zoomed"/>`;
+  lightbox.onclick = () => lightbox.remove();
+  
+  document.body.appendChild(lightbox);
+  
+  const onKey = (e) => {
+    if (e.key === 'Escape') {
+      lightbox.remove();
+      document.removeEventListener('keydown', onKey);
+    }
+  };
+  document.addEventListener('keydown', onKey);
+};
+
+// ===== AUTO-FOCUS & INIT =====
 usernameInput.focus();
+showShareURL();
+
+['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+  document.body.addEventListener(eventName, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, false);
+});
+
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => e.preventDefault());
+
+console.log('🎮 Pixel Chat Client Loaded');
+console.log('🌐 Current URL:', window.location.origin);
