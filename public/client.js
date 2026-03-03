@@ -1,6 +1,5 @@
-// Wait for DOM to be fully loaded
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('🎮 Pixel Chat Ultimate Loading...');
+  console.log('🎮 Pixel Chat Loading...');
   
   const socket = io();
 
@@ -22,7 +21,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const nameColorPicker = document.getElementById('name-color-picker');
   const buttonColorPicker = document.getElementById('button-color-picker');
   const bgColorPicker = document.getElementById('bg-color-picker');
+  const panelColorPicker = document.getElementById('panel-color-picker');
+  const bgImageUrl = document.getElementById('bg-image-url');
+  const bgImageUpload = document.getElementById('bg-image-upload');
+  const clearBgImageBtn = document.getElementById('clear-bg-image-btn');
+  const nameColorPreview = document.getElementById('name-color-preview');
+  const buttonColorPreview = document.getElementById('button-color-preview');
+  const bgColorPreview = document.getElementById('bg-color-preview');
+  const panelColorPreview = document.getElementById('panel-color-preview');
+  const bgImagePreview = document.getElementById('bg-image-preview');
   const saveColorsBtn = document.getElementById('save-colors-btn');
+  const resetColorsBtn = document.getElementById('reset-colors-btn');
   const backToStartCustomizeBtn = document.getElementById('back-to-start-customize-btn');
 
   const chatScreen = document.getElementById('chat-screen');
@@ -39,16 +48,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const cancelReplyBtn = document.getElementById('cancel-reply');
   const typingIndicator = document.getElementById('typing-indicator');
   const soundToggleBtn = document.getElementById('sound-toggle');
-  const hostBadge = document.getElementById('host-badge');
-  const reactionPicker = document.getElementById('reaction-picker');
+  const soundboardBtn = document.getElementById('soundboard-btn');
+  const soundboardPanel = document.getElementById('soundboard-panel');
+  const soundButtons = document.querySelectorAll('.sound-btn');
 
   // Tabs
   const tabBtns = document.querySelectorAll('.tab-btn');
   const mainChatPanel = document.getElementById('main-chat-panel');
   const threadsPanel = document.getElementById('threads-panel');
   const dmsPanel = document.getElementById('dms-panel');
-  const threadsTab = document.getElementById('threads-tab');
-  const dmsTab = document.getElementById('dms-tab');
 
   // Threads
   const threadsList = document.getElementById('threads-list');
@@ -68,18 +76,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const sendDmBtn = document.getElementById('send-dm-btn');
   const closeDmBtn = document.getElementById('close-dm-btn');
 
-  // Voice Chat
-  const voiceChatBtn = document.getElementById('voice-chat-btn');
-  const voicePanel = document.getElementById('voice-panel');
-  const voiceParticipantsEl = document.getElementById('voice-participants');
-  const toggleMicBtn = document.getElementById('toggle-mic-btn');
-  const leaveVoiceBtn = document.getElementById('leave-voice-btn');
-  const voiceModal = document.getElementById('voice-modal');
-  const cancelVoiceBtn = document.getElementById('cancel-voice-btn');
-
-  // Soundboard
-  const soundButtons = document.querySelectorAll('.sound-btn');
-
   // ===== STATE =====
   let currentRoom = null;
   let myUsername = null;
@@ -93,20 +89,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const messageReactions = new Map();
   const threads = new Map();
   let currentThread = null;
-  const dmUsers = new Map();
   let currentDM = null;
-  
-  // Voice Chat State
-  let localStream = null;
-  let peerConnections = new Map();
-  let isMicMuted = false;
-  let isInVoiceChat = false;
 
-  // ===== AUDIO SYSTEM =====
+  // ===== AUDIO =====
   window.audioContext = null;
   window.audioEnabled = false;
 
-  // Sound effects library (base64 or Web Audio API)
   const soundEffects = {
     airhorn: { freq: [200, 300, 400], type: 'sawtooth', duration: 0.5 },
     bruh: { freq: [150, 100], type: 'square', duration: 0.4 },
@@ -130,9 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function playSound(type) {
     if (!window.audioEnabled || !window.audioContext) return;
-    if (window.audioContext.state === 'suspended') {
-      window.audioContext.resume();
-    }
+    if (window.audioContext.state === 'suspended') window.audioContext.resume();
     
     const ctx = window.audioContext;
     const osc = ctx.createOscillator();
@@ -201,80 +187,33 @@ document.addEventListener('DOMContentLoaded', () => {
         osc.start(now);
         osc.stop(now + 0.2);
         break;
-      case 'voice':
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, now);
-        gain.gain.setValueAtTime(0.2, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-        osc.start(now);
-        osc.stop(now + 0.2);
-        break;
     }
   }
 
-  // ===== PARTICLE/VFX EFFECTS =====
-  function createParticles(x, y, count = 10, color = null) {
+  // ===== PARTICLES =====
+  function createParticles(x, y, count = 8, color = null) {
     for (let i = 0; i < count; i++) {
       const particle = document.createElement('div');
       particle.className = 'particle';
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
-      const distance = 30 + Math.random() * 50;
+      const distance = 30 + Math.random() * 40;
       particle.style.setProperty('--tx', `${Math.cos(angle) * distance}px`);
-      particle.style.setProperty('--ty', `${Math.sin(angle) * distance - 30}px`);
+      particle.style.setProperty('--ty', `${Math.sin(angle) * distance - 20}px`);
       particle.style.left = `${x}px`;
       particle.style.top = `${y}px`;
       if (color) {
         particle.style.background = color;
-        particle.style.boxShadow = `0 0 10px ${color}`;
       }
       document.body.appendChild(particle);
-      setTimeout(() => particle.remove(), 800);
+      setTimeout(() => particle.remove(), 600);
     }
   }
 
-  function createRipple(element, event) {
-    const ripple = document.createElement('div');
-    ripple.style.position = 'absolute';
-    ripple.style.borderRadius = '50%';
-    ripple.style.background = 'rgba(233, 69, 96, 0.5)';
-    ripple.style.transform = 'scale(0)';
-    ripple.style.animation = 'ripple 0.6s ease-out';
-    ripple.style.pointerEvents = 'none';
-    
-    const rect = element.getBoundingClientRect();
-    const size = Math.max(rect.width, rect.height);
-    ripple.style.width = ripple.style.height = `${size}px`;
-    ripple.style.left = `${event.clientX - rect.left - size/2}px`;
-    ripple.style.top = `${event.clientY - rect.top - size/2}px`;
-    
-    element.style.position = 'relative';
-    element.style.overflow = 'hidden';
-    element.appendChild(ripple);
-    
-    setTimeout(() => ripple.remove(), 600);
-  }
-
-  // Add ripple CSS dynamically
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes ripple {
-      to {
-        transform: scale(4);
-        opacity: 0;
-      }
-    }
-  `;
-  document.head.appendChild(style);
-
-  // ===== SCREEN NAVIGATION =====
+  // ===== SCREENS =====
   function showScreen(screen) {
-    if (!screen) {
-      console.error('❌ Screen element not found');
-      return;
-    }
+    if (!screen) return;
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     screen.classList.add('active');
-    console.log('📺 Screen changed to:', screen.id);
   }
 
   function showPanel(panelId) {
@@ -288,12 +227,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tab) tab.classList.add('active');
   }
 
-  // ===== START MENU BUTTONS =====
+  // ===== START MENU =====
   if (joinRoomBtn) {
-    joinRoomBtn.addEventListener('click', (e) => {
-      console.log('🚪 Join Room clicked');
+    joinRoomBtn.addEventListener('click', () => {
       initAudio();
-      createRipple(e.target, e);
       roomTitle.textContent = 'JOIN ROOM';
       showScreen(roomScreen);
       usernameInput?.focus();
@@ -301,10 +238,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (hostRoomBtn) {
-    hostRoomBtn.addEventListener('click', (e) => {
-      console.log('🏠 Host Room clicked');
+    hostRoomBtn.addEventListener('click', () => {
       initAudio();
-      createRipple(e.target, e);
       roomTitle.textContent = 'HOST ROOM';
       showScreen(roomScreen);
       usernameInput?.focus();
@@ -312,21 +247,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (customizeBtn) {
-    customizeBtn.addEventListener('click', (e) => {
-      console.log('🎨 Customize clicked');
+    customizeBtn.addEventListener('click', () => {
       initAudio();
-      createRipple(e.target, e);
       loadColorPreviews();
       showScreen(customizeScreen);
     });
   }
 
-  // ===== ROOM SCREEN BUTTONS =====
+  // ===== ROOM SCREEN =====
   if (enterRoomBtn) {
-    enterRoomBtn.addEventListener('click', (e) => {
-      createRipple(e.target, e);
-      attemptEnterRoom();
-    });
+    enterRoomBtn.addEventListener('click', attemptEnterRoom);
   }
 
   if (backToStartBtn) {
@@ -353,72 +283,145 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function attemptEnterRoom() {
-    console.log('🔑 Attempting to enter room...');
     initAudio();
     
     const username = usernameInput?.value.trim().toUpperCase() || 'GUEST' + Math.floor(Math.random()*999);
     const room = roomInput?.value.trim().toUpperCase() || 'LOBBY';
     
-    if (username.length < 2) {
-      alert('NAME TOO SHORT!');
-      return;
-    }
-    if (room.length < 2) {
-      alert('ROOM CODE TOO SHORT!');
-      return;
-    }
+    if (username.length < 2) { alert('NAME TOO SHORT!'); return; }
+    if (room.length < 2) { alert('ROOM CODE TOO SHORT!'); return; }
     
     myUsername = username;
     currentRoom = room;
     isHost = roomTitle.textContent.includes('HOST');
     
-    console.log('📤 Emitting joinRoom:', { roomName: room, username, isHost });
     socket.emit('joinRoom', { roomName: room, username, isHost });
     playSystemSound('join');
     showServerURL();
   }
 
-  // ===== CUSTOMIZE SCREEN =====
+  // ===== CUSTOMIZE =====
   function loadColorPreviews() {
-    // Load from localStorage or defaults
     const savedColors = localStorage.getItem('pixelChatColors');
     if (savedColors) {
       const colors = JSON.parse(savedColors);
       if (nameColorPicker) nameColorPicker.value = colors.nameColor || '#4cc9f0';
       if (buttonColorPicker) buttonColorPicker.value = colors.buttonColor || '#e94560';
       if (bgColorPicker) bgColorPicker.value = colors.bgColor || '#1a1a2e';
+      if (panelColorPicker) panelColorPicker.value = colors.panelColor || '#16213e';
+      if (bgImageUrl) bgImageUrl.value = colors.bgImage || '';
+    }
+    updateColorPreviews();
+  }
+
+  function updateColorPreviews() {
+    if (nameColorPreview) nameColorPreview.style.background = nameColorPicker?.value || '#4cc9f0';
+    if (buttonColorPreview) buttonColorPreview.style.background = buttonColorPicker?.value || '#e94560';
+    if (bgColorPreview) bgColorPreview.style.background = bgColorPicker?.value || '#1a1a2e';
+    if (panelColorPreview) panelColorPreview.style.background = panelColorPicker?.value || '#16213e';
+    if (bgImagePreview && bgImageUrl?.value) {
+      bgImagePreview.style.backgroundImage = `url(${bgImageUrl.value})`;
     }
   }
 
   if (nameColorPicker) {
     nameColorPicker.addEventListener('input', () => {
+      updateColorPreviews();
       document.documentElement.style.setProperty('--pixel-success', nameColorPicker.value);
     });
   }
 
   if (buttonColorPicker) {
     buttonColorPicker.addEventListener('input', () => {
+      updateColorPreviews();
       document.documentElement.style.setProperty('--pixel-accent', buttonColorPicker.value);
     });
   }
 
   if (bgColorPicker) {
     bgColorPicker.addEventListener('input', () => {
+      updateColorPreviews();
       document.documentElement.style.setProperty('--pixel-bg', bgColorPicker.value);
     });
   }
 
+  if (panelColorPicker) {
+    panelColorPicker.addEventListener('input', () => {
+      updateColorPreviews();
+      document.documentElement.style.setProperty('--pixel-panel', panelColorPicker.value);
+    });
+  }
+
+  if (bgImageUrl) {
+    bgImageUrl.addEventListener('input', () => {
+      updateColorPreviews();
+    });
+  }
+
+  if (bgImageUpload) {
+    bgImageUpload.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file && file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (bgImageUrl) bgImageUrl.value = event.target.result;
+          updateColorPreviews();
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  }
+
+  if (clearBgImageBtn) {
+    clearBgImageBtn.addEventListener('click', () => {
+      if (bgImageUrl) bgImageUrl.value = '';
+      updateColorPreviews();
+    });
+  }
+
   if (saveColorsBtn) {
-    saveColorsBtn.addEventListener('click', (e) => {
-      createRipple(e.target, e);
+    saveColorsBtn.addEventListener('click', () => {
       const colors = {
         nameColor: nameColorPicker?.value || '#4cc9f0',
         buttonColor: buttonColorPicker?.value || '#e94560',
         bgColor: bgColorPicker?.value || '#1a1a2e',
-        panelColor: '#16213e'
+        panelColor: panelColorPicker?.value || '#16213e',
+        bgImage: bgImageUrl?.value || ''
       };
       localStorage.setItem('pixelChatColors', JSON.stringify(colors));
+      
+      // Apply background image immediately
+      if (colors.bgImage) {
+        document.body.style.backgroundImage = `url(${colors.bgImage})`;
+        document.body.style.backgroundSize = 'cover';
+        document.body.style.backgroundPosition = 'center';
+        document.body.style.backgroundAttachment = 'fixed';
+      } else {
+        document.body.style.backgroundImage = '';
+      }
+      
       addSystemMessage('💾 Colors saved!');
+      playSystemSound('send');
+    });
+  }
+
+  if (resetColorsBtn) {
+    resetColorsBtn.addEventListener('click', () => {
+      if (nameColorPicker) nameColorPicker.value = '#4cc9f0';
+      if (buttonColorPicker) buttonColorPicker.value = '#e94560';
+      if (bgColorPicker) bgColorPicker.value = '#1a1a2e';
+      if (panelColorPicker) panelColorPicker.value = '#16213e';
+      if (bgImageUrl) bgImageUrl.value = '';
+      updateColorPreviews();
+      
+      document.documentElement.style.setProperty('--pixel-success', '#4cc9f0');
+      document.documentElement.style.setProperty('--pixel-accent', '#e94560');
+      document.documentElement.style.setProperty('--pixel-bg', '#1a1a2e');
+      document.documentElement.style.setProperty('--pixel-panel', '#16213e');
+      document.body.style.backgroundImage = '';
+      
+      localStorage.removeItem('pixelChatColors');
+      addSystemMessage('🔄 Colors reset!');
       playSystemSound('send');
     });
   }
@@ -429,12 +432,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ===== TABS =====
   tabBtns.forEach(tab => {
-    tab.addEventListener('click', (e) => {
-      createRipple(e.target, e);
+    tab.addEventListener('click', () => {
       const tabName = tab.dataset.tab;
       showPanel(`${tabName}-panel`);
       
-      // Hide thread/DM views when switching tabs
       if (tabName !== 'threads') {
         threadView.classList.add('hidden');
         threadsList.classList.remove('hidden');
@@ -448,15 +449,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ===== CHAT SCREEN =====
+  // ===== CHAT =====
   if (leaveBtn) {
-    leaveBtn.addEventListener('click', (e) => {
-      createRipple(e.target, e);
+    leaveBtn.addEventListener('click', () => {
       if (currentRoom) {
-        // Leave voice chat if active
-        if (isInVoiceChat) {
-          leaveVoiceChat();
-        }
         addSystemMessage('🔌 Disconnected');
         showScreen(startScreen);
         currentRoom = null;
@@ -465,15 +461,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (userCountEl) userCountEl.textContent = '0';
         clearReply();
         clearImagePreview();
-        if (hostBadge) hostBadge.classList.add('hidden');
-        if (voicePanel) voicePanel.classList.add('hidden');
+        if (soundboardPanel) soundboardPanel.classList.add('hidden');
       }
     });
   }
 
   if (sendBtn) {
-    sendBtn.addEventListener('click', (e) => {
-      createRipple(e.target, e);
+    sendBtn.addEventListener('click', () => {
       initAudio();
       sendMessage();
     });
@@ -499,7 +493,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function sendMessage() {
-    console.log('📤 Sending message...');
     if (!messageInput) return;
     
     const message = messageInput.value.trim();
@@ -514,25 +507,25 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     
-    const messageData = {
+    socket.emit('chatMessage', {
       roomName: currentRoom,
       username: myUsername,
       message,
       image,
       replyTo: pendingReply
-    };
+    });
     
-    console.log('📤 Emitting chatMessage');
-    socket.emit('chatMessage', messageData);
-    
-    const localData = {
-      ...messageData,
+    addMessage({
+      roomName: currentRoom,
+      username: myUsername,
+      message,
+      image,
+      replyTo: pendingReply,
       id: Date.now() + '-local',
       timestamp: new Date().toLocaleTimeString(),
       senderId: socket.id,
       reactions: {}
-    };
-    addMessage(localData, true);
+    }, true);
     
     messageInput.value = '';
     clearImagePreview();
@@ -546,7 +539,7 @@ document.addEventListener('DOMContentLoaded', () => {
     playSystemSound('send');
     if (sendBtn) {
       const rect = sendBtn.getBoundingClientRect();
-      createParticles(rect.left + rect.offsetWidth/2, rect.top, 15, '#e94560');
+      createParticles(rect.left + rect.offsetWidth/2, rect.top, 10, '#e94560');
     }
     scrollToBottom();
   }
@@ -604,7 +597,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (messageInput) messageInput.placeholder = 'TYPE MESSAGE...';
   }
 
-  // ===== REPLY SYSTEM =====
+  // ===== REPLY =====
   if (messagesEl) {
     messagesEl.addEventListener('dblclick', (e) => {
       initAudio();
@@ -638,6 +631,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (btn) {
         const messageEl = btn.closest('.message');
         selectedMessageId = messageEl.dataset.id;
+        const reactionPicker = document.getElementById('reaction-picker');
         if (reactionPicker) reactionPicker.classList.toggle('hidden');
       }
     });
@@ -652,135 +646,40 @@ document.addEventListener('DOMContentLoaded', () => {
           emoji: emoji.dataset.emoji,
           username: myUsername
         });
+        const reactionPicker = document.getElementById('reaction-picker');
         if (reactionPicker) reactionPicker.classList.add('hidden');
         selectedMessageId = null;
       }
     });
   });
 
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.add-reaction-btn') && !e.target.closest('.reaction-picker')) {
-      if (reactionPicker) reactionPicker.classList.add('hidden');
-      selectedMessageId = null;
-    }
-  });
-
-  // ===== SOUND TOGGLE =====
-  if (soundToggleBtn) {
-    soundToggleBtn.addEventListener('click', (e) => {
-      createRipple(e.target, e);
-      initAudio();
-      window.audioEnabled = !window.audioEnabled;
-      soundToggleBtn.textContent = window.audioEnabled ? '🔊' : '🔇';
-      soundToggleBtn.title = window.audioEnabled ? 'Sound ON' : 'Sound OFF';
-      addSystemMessage(window.audioEnabled ? '🔊 Sound ENABLED' : '🔇 Sound DISABLED');
+  // ===== SOUNDBOARD =====
+  if (soundboardBtn) {
+    soundboardBtn.addEventListener('click', () => {
+      if (soundboardPanel) {
+        soundboardPanel.classList.toggle('hidden');
+      }
     });
   }
 
-  // ===== VOICE CHAT (WebRTC) =====
-  if (voiceChatBtn) {
-    voiceChatBtn.addEventListener('click', async (e) => {
-      createRipple(e.target, e);
-      initAudio();
-      await startVoiceChat();
-    });
-  }
-
-  if (toggleMicBtn) {
-    toggleMicBtn.addEventListener('click', (e) => {
-      createRipple(e.target, e);
-      toggleMic();
-    });
-  }
-
-  if (leaveVoiceBtn) {
-    leaveVoiceBtn.addEventListener('click', (e) => {
-      createRipple(e.target, e);
-      leaveVoiceChat();
-    });
-  }
-
-  if (cancelVoiceBtn) {
-    cancelVoiceBtn.addEventListener('click', () => {
-      voiceModal.classList.add('hidden');
-    });
-  }
-
-  async function startVoiceChat() {
-    if (isInVoiceChat) return;
-    
-    voiceModal.classList.remove('hidden');
-    
-    try {
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      isInVoiceChat = true;
-      
-      if (voicePanel) voicePanel.classList.remove('hidden');
-      voiceModal.classList.add('hidden');
-      
-      playSystemSound('voice');
-      addSystemMessage('🎤 Voice chat connected!');
-      
-      // Notify others
-      socket.emit('voiceJoin', { roomName: currentRoom, username: myUsername });
-      
-      // Add self to participants
-      updateVoiceParticipants([{ username: myUsername, isSelf: true, isSpeaking: false }]);
-      
-    } catch (err) {
-      console.error('❌ Voice chat error:', err);
-      voiceModal.classList.add('hidden');
-      addSystemMessage('⚠️ Could not access microphone');
-      playSystemSound('error');
-    }
-  }
-
-  function toggleMic() {
-    if (!localStream) return;
-    
-    const audioTrack = localStream.getAudioTracks()[0];
-    if (audioTrack) {
-      isMicMuted = !isMicMuted;
-      audioTrack.enabled = !isMicMuted;
-      toggleMicBtn.textContent = isMicMuted ? '🎤 Unmute' : '🎤 Mute';
-      addSystemMessage(isMicMuted ? '🔇 Microphone muted' : '🔊 Microphone unmuted');
-    }
-  }
-
-  function leaveVoiceChat() {
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
-      localStream = null;
-    }
-    
-    peerConnections.forEach(pc => pc.close());
-    peerConnections.clear();
-    
-    isInVoiceChat = false;
-    isMicMuted = false;
-    
-    if (voicePanel) voicePanel.classList.add('hidden');
-    if (toggleMicBtn) toggleMicBtn.textContent = '🎤 Mute';
-    
-    addSystemMessage('🎤 Left voice chat');
-    socket.emit('voiceLeave', { roomName: currentRoom });
-  }
-
-  // Soundboard
   soundButtons.forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      createRipple(e.target, e);
+    btn.addEventListener('click', () => {
       const soundId = btn.dataset.sound;
       if (soundId && currentRoom) {
         playSound(soundId);
         socket.emit('playSound', { roomName: currentRoom, soundId, username: myUsername });
-        
-        // Visual feedback
-        btn.style.transform = 'scale(0.9)';
-        setTimeout(() => btn.style.transform = '', 100);
       }
     });
   });
+
+  if (soundToggleBtn) {
+    soundToggleBtn.addEventListener('click', () => {
+      initAudio();
+      window.audioEnabled = !window.audioEnabled;
+      soundToggleBtn.textContent = window.audioEnabled ? '🔊' : '🔇';
+      addSystemMessage(window.audioEnabled ? '🔊 Sound ENABLED' : '🔇 Sound DISABLED');
+    });
+  }
 
   // ===== THREADS =====
   if (closeThreadBtn) {
@@ -807,6 +706,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const message = threadMessageInput.value.trim();
     if (!message) return;
     
+    console.log('🧵 Sending thread message:', { threadId: currentThread.id, message });
     socket.emit('threadMessage', {
       threadId: currentThread.id,
       username: myUsername,
@@ -868,7 +768,6 @@ document.addEventListener('DOMContentLoaded', () => {
     updateUserList(users);
     showScreen(chatScreen);
     addSystemMessage(`🎮 Connected to ${roomName}${isHost ? ' (HOST)' : ''}`);
-    if (hostBadge && isHost) hostBadge.classList.remove('hidden');
     if (messageInput) messageInput.focus();
     playSystemSound('join');
     showServerURL();
@@ -879,10 +778,6 @@ document.addEventListener('DOMContentLoaded', () => {
     addMessage(data, false);
     scrollToBottom();
     playSystemSound('receive');
-    if (messagesEl) {
-      const rect = messagesEl.getBoundingClientRect();
-      createParticles(rect.right - 20, rect.bottom - 50, 8, '#4cc9f0');
-    }
   });
 
   socket.on('reactionAdded', ({ messageId, emoji, username, socketId }) => {
@@ -921,20 +816,22 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Thread events
-  socket.on('threadCreated', ({ threadId, threadName, parentMessageId, createdBy }) => {
+  socket.on('threadCreated', ({ threadId, threadName, createdBy }) => {
     threads.set(threadId, { id: threadId, name: threadName, messages: [] });
     addSystemMessage(`🧵 ${createdBy} created thread: ${threadName}`);
     updateThreadsList();
   });
 
   socket.on('threadMessage', (data) => {
+    console.log('🧵 Received thread message:', data);
     if (currentThread && currentThread.id === data.threadId) {
       addThreadMessage(data);
     }
   });
 
-  socket.on('threadMessages', (messages) => {
-    if (currentThread) {
+  socket.on('threadMessages', ({ threadId, messages }) => {
+    console.log('🧵 Received thread messages:', messages.length);
+    if (currentThread && currentThread.id === threadId) {
       threadMessagesEl.innerHTML = '';
       messages.forEach(msg => addThreadMessage(msg));
     }
@@ -946,7 +843,6 @@ document.addEventListener('DOMContentLoaded', () => {
       addDMMessage(data);
       playSystemSound('receive');
     } else {
-      // Show notification
       addSystemMessage(`📩 New DM from ${data.fromUsername}`);
     }
   });
@@ -964,7 +860,7 @@ document.addEventListener('DOMContentLoaded', () => {
     addSystemMessage(`🔊 ${username} played ${soundId}`);
   });
 
-  // ===== REACTION HELPERS =====
+  // ===== HELPERS =====
   function updateMessageReactions(messageId, emoji, username, socketId, action) {
     if (!messageReactions.has(messageId)) {
       messageReactions.set(messageId, {});
@@ -1018,7 +914,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // ===== UI HELPERS =====
   function parseMarkdown(text) {
     if (!text) return '';
     let escaped = escapeHtml(text);
@@ -1058,18 +953,18 @@ document.addEventListener('DOMContentLoaded', () => {
       content += `<span class="text">${parseMarkdown(data.message)}</span>`;
     }
     
-    // Add thread creation button on long press / context menu
     msgEl.innerHTML = `
       <span class="meta"><span class="username">${escapeHtml(data.username)}</span><span class="time">[${data.timestamp}]</span></span>
       ${content}
-      <span class="add-reaction-btn">😊</span>
+      <span class="add-reaction-btn" title="Add Reaction">😊</span>
       <span class="create-thread-btn" title="Create Thread">🧵</span>
     `;
     
-    // Thread creation
+    // Thread creation - only on hover
     const threadBtn = msgEl.querySelector('.create-thread-btn');
     if (threadBtn) {
-      threadBtn.addEventListener('click', () => {
+      threadBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const threadName = prompt('Thread name:', `Thread about "${data.message.substring(0, 30)}..."`);
         if (threadName && currentRoom) {
           socket.emit('createThread', {
@@ -1079,6 +974,22 @@ document.addEventListener('DOMContentLoaded', () => {
             username: myUsername
           });
         }
+      });
+    }
+    
+    // Reaction button
+    const reactionBtn = msgEl.querySelector('.add-reaction-btn');
+    if (reactionBtn) {
+      reactionBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectedMessageId = data.id;
+        // Simple reaction (thumbs up for now)
+        socket.emit('addReaction', {
+          roomName: currentRoom,
+          messageId: data.id,
+          emoji: '👍',
+          username: myUsername
+        });
       });
     }
     
@@ -1112,7 +1023,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (user.username === myUsername) li.classList.add('you');
       if (user.isHost) li.classList.add('host');
       
-      // Click to DM
       li.addEventListener('click', () => {
         if (user.id !== mySocketId) {
           openDM(user.id, user.username);
@@ -1145,8 +1055,6 @@ document.addEventListener('DOMContentLoaded', () => {
     dmUsernameEl.textContent = username;
     dmChat.classList.remove('hidden');
     dmUsersList.classList.add('hidden');
-    
-    // Request DM history
     socket.emit('getDMHistory', { userId });
   }
 
@@ -1187,8 +1095,6 @@ document.addEventListener('DOMContentLoaded', () => {
     threadNameEl.textContent = threadName;
     threadView.classList.remove('hidden');
     threadsList.classList.add('hidden');
-    
-    // Join thread and get messages
     socket.emit('joinThread', { threadId });
   }
 
@@ -1211,21 +1117,10 @@ document.addEventListener('DOMContentLoaded', () => {
     threadMessagesEl.scrollTop = threadMessagesEl.scrollHeight;
   }
 
-  function updateVoiceParticipants(participants) {
-    if (!voiceParticipantsEl) return;
-    voiceParticipantsEl.innerHTML = '';
-    
-    participants.forEach(p => {
-      const div = document.createElement('div');
-      div.className = `voice-participant${p.isSpeaking ? ' speaking' : ''}`;
-      div.innerHTML = `${p.isSelf ? '🎤' : '👤'} ${p.username}`;
-      voiceParticipantsEl.appendChild(div);
-    });
-  }
-
   function scrollToBottom() {
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
     if (dmMessagesEl) dmMessagesEl.scrollTop = dmMessagesEl.scrollHeight;
+    if (threadMessagesEl) threadMessagesEl.scrollTop = threadMessagesEl.scrollHeight;
   }
 
   function escapeHtml(str) {
@@ -1241,8 +1136,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!img) return;
     const lightbox = document.createElement('div');
     lightbox.className = 'lightbox';
-    lightbox.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;z-index:2000;cursor:zoom-out;';
-    lightbox.innerHTML = `<img src="${img.src}" alt="zoomed" style="max-width:95vw;max-height:95vh;"/>`;
+    lightbox.innerHTML = `<img src="${img.src}" alt="zoomed"/>`;
     lightbox.onclick = () => lightbox.remove();
     document.body.appendChild(lightbox);
     const onKey = (e) => {
@@ -1254,40 +1148,23 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('keydown', onKey);
   };
 
-  // ===== SHOW SERVER URL =====
+  // ===== SERVER URL =====
   function showServerURL() {
     if (serverUrlEl && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
       serverUrlEl.textContent = `🌐 ${window.location.origin}`;
     }
   }
 
-  // ===== LOAD SAVED COLORS =====
-  const savedColors = localStorage.getItem('pixelChatColors');
-  if (savedColors) {
-    try {
-      const colors = JSON.parse(savedColors);
-      if (colors.nameColor) document.documentElement.style.setProperty('--pixel-success', colors.nameColor);
-      if (colors.buttonColor) document.documentElement.style.setProperty('--pixel-accent', colors.buttonColor);
-      if (colors.bgColor) document.documentElement.style.setProperty('--pixel-bg', colors.bgColor);
-      if (colors.panelColor) document.documentElement.style.setProperty('--pixel-panel', colors.panelColor);
-      console.log('🎨 Loaded saved colors from localStorage');
-    } catch(e) {
-      console.error('❌ Error loading saved colors:', e);
-    }
-  }
-
-  // ===== INITIALIZATION =====
-  console.log('🎮 Pixel Chat Ultimate Ready!');
-  console.log('🔌 Socket.IO Status:', socket.connected ? 'Connected' : 'Disconnected');
+  // ===== INIT =====
+  console.log('🎮 Pixel Chat Ready!');
+  console.log('🔌 Socket:', socket.connected ? 'Connected' : 'Disconnected');
   console.log('🧵 Threads: Enabled');
   console.log('📩 DMs: Enabled');
-  console.log('🎤 Voice Chat: Enabled');
-  console.log('🔊 Soundboard: Enabled');
+  console.log('🎵 Soundboard: Enabled');
   showServerURL();
   
   if (usernameInput) usernameInput.focus();
 
-  // Prevent default drag behaviors
   ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
     document.body.addEventListener(eventName, (e) => {
       e.preventDefault();

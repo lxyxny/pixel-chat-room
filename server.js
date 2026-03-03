@@ -21,11 +21,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Data structures
 const rooms = new Map();
 const threads = new Map();
 const privateMessages = new Map();
-const users = new Map(); // socketId -> userInfo
+const users = new Map();
 
 function isValidImage(dataUrl) {
   if (!dataUrl || typeof dataUrl !== 'string') return false;
@@ -40,7 +39,6 @@ io.on('connection', (socket) => {
   
   users.set(socket.id, { socketId: socket.id });
 
-  // Join room
   socket.on('joinRoom', ({ roomName, username, isHost }) => {
     socket.join(roomName);
     
@@ -83,7 +81,6 @@ io.on('connection', (socket) => {
     console.log(`🚪 ${username} joined room: ${roomName}`);
   });
 
-  // Chat message
   socket.on('chatMessage', ({ roomName, username, message, image, replyTo }) => {
     if (!message?.trim() && !image) return;
     
@@ -107,7 +104,6 @@ io.on('connection', (socket) => {
     console.log(`💬 [${roomName}] ${username}: ${message?.substring(0, 50) || ''}`);
   });
 
-  // Create thread
   socket.on('createThread', ({ roomName, parentMessageId, threadName, username }) => {
     const threadId = uuidv4();
     const thread = {
@@ -133,7 +129,6 @@ io.on('connection', (socket) => {
     console.log(`🧵 Thread created: ${thread.name}`);
   });
 
-  // Thread message
   socket.on('threadMessage', ({ threadId, username, message, image }) => {
     const thread = threads.get(threadId);
     if (!thread) return;
@@ -144,21 +139,21 @@ io.on('connection', (socket) => {
       message: message?.trim() || '',
       image: image || null,
       timestamp: new Date().toLocaleTimeString(),
-      senderId: socket.id
+      senderId: socket.id,
+      threadId: threadId
     };
     
     thread.messages.push(messageData);
-    socket.to(`thread-${threadId}`).emit('threadMessage', messageData);
-    socket.emit('threadMessage', messageData); // Send to self
+    io.to(`thread-${threadId}`).emit('threadMessage', messageData);
+    console.log(`🧵 Thread message in ${threadId}`);
   });
 
-  // Join/leave thread
   socket.on('joinThread', ({ threadId }) => {
     const thread = threads.get(threadId);
     if (thread) {
       thread.participants.add(socket.id);
       socket.join(`thread-${threadId}`);
-      socket.emit('threadMessages', thread.messages);
+      socket.emit('threadMessages', { threadId, messages: thread.messages });
     }
   });
 
@@ -170,7 +165,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Private message
   socket.on('privateMessage', ({ toUserId, fromUsername, message, image }) => {
     const dmId = [socket.id, toUserId].sort().join('-');
     
@@ -189,40 +183,23 @@ io.on('connection', (socket) => {
     }
     privateMessages.get(dmId).push(messageData);
     
-    // Send to recipient if online
     io.to(toUserId).emit('privateMessage', messageData);
     socket.emit('privateMessage', messageData);
     
     console.log(`📩 DM from ${fromUsername} to ${toUserId}`);
   });
 
-  // Get DM history
   socket.on('getDMHistory', ({ userId }) => {
     const dmId = [socket.id, userId].sort().join('-');
     const history = privateMessages.get(dmId) || [];
     socket.emit('dmHistory', { userId, messages: history });
   });
 
-  // Voice chat signaling (WebRTC)
-  socket.on('voiceOffer', ({ offer, targetUserId, fromUsername }) => {
-    socket.to(targetUserId).emit('voiceOffer', { offer, fromUserId: socket.id, fromUsername });
-  });
-
-  socket.on('voiceAnswer', ({ answer, targetUserId }) => {
-    socket.to(targetUserId).emit('voiceAnswer', { answer, fromUserId: socket.id });
-  });
-
-  socket.on('iceCandidate', ({ candidate, targetUserId }) => {
-    socket.to(targetUserId).emit('iceCandidate', { candidate, fromUserId: socket.id });
-  });
-
-  // Soundboard
   socket.on('playSound', ({ roomName, soundId, username }) => {
     socket.to(roomName).emit('playSound', { soundId, username });
     console.log(`🔊 ${username} played sound ${soundId}`);
   });
 
-  // Reactions
   socket.on('addReaction', ({ roomName, messageId, emoji, username }) => {
     io.to(roomName).emit('reactionAdded', {
       messageId,
@@ -241,12 +218,10 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Typing
   socket.on('typing', ({ roomName, username, isTyping }) => {
     socket.to(roomName).emit('userTyping', { username, isTyping });
   });
 
-  // Disconnect
   socket.on('disconnect', () => {
     console.log(`🔌 Player disconnected: ${socket.id}`);
     
@@ -276,9 +251,8 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🎮 Pixel Chat Ultimate running on http://localhost:${PORT}`);
+  console.log(`🎮 Pixel Chat running on http://localhost:${PORT}`);
   console.log(`🧵 Threads enabled`);
   console.log(`📩 Private messages enabled`);
-  console.log(`🎤 Voice chat enabled`);
   console.log(`🔊 Soundboard enabled`);
 });

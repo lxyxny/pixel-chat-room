@@ -1,7 +1,7 @@
 {
   "name": "pixel-chat-room",
-  "version": "3.0.0",
-  "description": "Retro pixel art chat room with reactions & markdown",
+  "version": "4.1.0",
+  "description": "Retro pixel art chat room with threads, DMs, voice & soundboard",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -12,6 +12,6 @@
   "dependencies": {
     "express": "^4.18.2",
     "socket.io": "^4.7.2",
-    "uuid": "^13.0.0"
+    "uuid": "^9.0.0"
   }
 }
