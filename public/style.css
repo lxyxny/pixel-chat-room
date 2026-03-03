@@ -12,8 +12,12 @@
   --pixel-text: #f1faee;
   --pixel-dim: #8d99ae;
   --pixel-success: #4cc9f0;
+  --pixel-btn-text: #ffffff;
   --pixel-font: 'Press Start 2P', monospace;
   --pixel-size: 4px;
+  --ui-opacity: 1;
+  --button-opacity: 1;
+  --text-opacity: 1;
 }
 
 body {
@@ -40,13 +44,14 @@ body {
   width: 100%;
   max-width: 1100px;
   background: var(--pixel-panel);
+  opacity: var(--ui-opacity);
   border: calc(var(--pixel-size) * 2) solid var(--pixel-border);
   box-shadow: 
     0 0 0 calc(var(--pixel-size) * 4) var(--pixel-border),
     8px 8px 0 rgba(0,0,0,0.5);
   padding: calc(var(--pixel-size) * 3);
   position: relative;
-  transition: background-color 0.3s ease;
+  transition: background-color 0.3s ease, opacity 0.3s ease;
 }
 
 .pixel-container::before {
@@ -83,12 +88,14 @@ body {
   color: var(--pixel-dim); 
   font-size: 8px; 
   margin-top: calc(var(--pixel-size) * 3);
+  opacity: var(--text-opacity);
 }
 .pixel-label { 
   font-size: 9px; 
   border-bottom: 2px solid var(--pixel-border); 
   padding-bottom: calc(var(--pixel-size) * 2);
   margin-bottom: calc(var(--pixel-size) * 2);
+  opacity: var(--text-opacity);
 }
 
 input[type="text"] {
@@ -102,6 +109,7 @@ input[type="text"] {
   font-size: 9px;
   outline: none;
   image-rendering: pixelated;
+  opacity: var(--text-opacity);
 }
 
 input[type="text"]::placeholder { color: var(--pixel-dim); opacity: 0.7; }
@@ -120,9 +128,15 @@ input[type="color"] {
   padding: 0;
 }
 
+input[type="range"] {
+  width: 100%;
+  margin: calc(var(--pixel-size) * 2) 0;
+  cursor: pointer;
+}
+
 .pixel-btn {
   background: var(--pixel-accent);
-  color: white;
+  color: var(--pixel-btn-text);
   border: 2px solid var(--pixel-border);
   padding: calc(var(--pixel-size) * 2) calc(var(--pixel-size) * 4);
   font-family: var(--pixel-font);
@@ -131,8 +145,9 @@ input[type="color"] {
   margin: calc(var(--pixel-size) * 2) 0;
   width: 100%;
   position: relative;
-  transition: transform 0.1s, background-color 0.3s ease;
+  transition: transform 0.1s, background-color 0.3s ease, opacity 0.3s ease;
   image-rendering: pixelated;
+  opacity: var(--button-opacity);
 }
 
 .pixel-btn:hover {
@@ -253,6 +268,7 @@ input[type="color"] {
   font-family: var(--pixel-font);
   font-size: 8px;
   transition: all 0.2s;
+  opacity: var(--button-opacity);
 }
 
 .tab-btn.active {
@@ -262,6 +278,10 @@ input[type="color"] {
 
 .tab-btn:hover:not(.active) {
   background: rgba(233, 69, 96, 0.3);
+}
+
+.tab-btn.hidden {
+  display: none !important;
 }
 
 .chat-panel {
@@ -330,6 +350,7 @@ input[type="color"] {
   font-size: 7px;
   margin-bottom: calc(var(--pixel-size) * 0.5);
   display: block;
+  opacity: var(--text-opacity);
 }
 
 .message .username {
@@ -337,7 +358,10 @@ input[type="color"] {
   font-weight: bold;
 }
 
-.message .text { word-wrap: break-word; }
+.message .text { 
+  word-wrap: break-word;
+  opacity: var(--text-opacity);
+}
 .message .text em { font-style: italic; }
 .message .text strong { font-weight: bold; }
 .message .text strong em { font-weight: bold; font-style: italic; }
@@ -411,7 +435,6 @@ input[type="color"] {
   color: var(--pixel-dim);
 }
 
-/* Thread icon - only show on hover */
 .message .create-thread-btn {
   position: absolute;
   top: 4px;
@@ -423,6 +446,7 @@ input[type="color"] {
   background: var(--pixel-accent);
   border: 1px solid var(--pixel-border);
   padding: 2px 4px;
+  color: var(--pixel-btn-text);
 }
 
 .message:hover .create-thread-btn {
@@ -440,6 +464,7 @@ input[type="color"] {
   background: var(--pixel-accent);
   border: 1px solid var(--pixel-border);
   padding: 2px 4px;
+  color: var(--pixel-btn-text);
 }
 
 .message:hover .add-reaction-btn {
@@ -541,6 +566,7 @@ input[type="color"] {
   font-size: 16px;
   cursor: pointer;
   transition: all 0.2s;
+  opacity: var(--button-opacity);
 }
 
 .sound-btn:hover {

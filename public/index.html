@@ -51,6 +51,12 @@
         </div>
         
         <div class="customize-section">
+          <h3 class="pixel-label">BUTTON TEXT COLOR</h3>
+          <input type="color" id="button-text-color-picker" value="#ffffff" />
+          <div class="color-preview" id="button-text-color-preview"></div>
+        </div>
+        
+        <div class="customize-section">
           <h3 class="pixel-label">BACKGROUND COLOR</h3>
           <input type="color" id="bg-color-picker" value="#1a1a2e" />
           <div class="color-preview" id="bg-color-preview"></div>
@@ -69,6 +75,24 @@
           <h3 class="pixel-label">PANEL COLOR</h3>
           <input type="color" id="panel-color-picker" value="#16213e" />
           <div class="color-preview" id="panel-color-preview"></div>
+        </div>
+        
+        <div class="customize-section">
+          <h3 class="pixel-label">UI TRANSPARENCY</h3>
+          <input type="range" id="ui-opacity-slider" min="0.5" max="1" step="0.05" value="1" />
+          <span id="ui-opacity-value">100%</span>
+        </div>
+        
+        <div class="customize-section">
+          <h3 class="pixel-label">BUTTON TRANSPARENCY</h3>
+          <input type="range" id="button-opacity-slider" min="0.5" max="1" step="0.05" value="1" />
+          <span id="button-opacity-value">100%</span>
+        </div>
+        
+        <div class="customize-section">
+          <h3 class="pixel-label">TEXT TRANSPARENCY</h3>
+          <input type="range" id="text-opacity-slider" min="0.5" max="1" step="0.05" value="1" />
+          <span id="text-opacity-value">100%</span>
         </div>
         
         <button id="save-colors-btn" class="pixel-btn">💾 SAVE</button>
@@ -94,7 +118,7 @@
         <div class="main-chat">
           <div class="chat-tabs">
             <button class="tab-btn active" data-tab="main">💬 MAIN</button>
-            <button class="tab-btn" data-tab="threads">🧵 THREADS</button>
+            <button class="tab-btn hidden" data-tab="threads" id="threads-tab">🧵 THREADS</button>
             <button class="tab-btn" data-tab="dms">📩 DMS</button>
           </div>
           
@@ -182,6 +206,10 @@
         document.documentElement.style.setProperty('--pixel-accent', colors.buttonColor || '#e94560');
         document.documentElement.style.setProperty('--pixel-bg', colors.bgColor || '#1a1a2e');
         document.documentElement.style.setProperty('--pixel-panel', colors.panelColor || '#16213e');
+        document.documentElement.style.setProperty('--pixel-btn-text', colors.buttonTextColor || '#ffffff');
+        document.documentElement.style.setProperty('--ui-opacity', colors.uiOpacity || '1');
+        document.documentElement.style.setProperty('--button-opacity', colors.buttonOpacity || '1');
+        document.documentElement.style.setProperty('--text-opacity', colors.textOpacity || '1');
         
         if (colors.bgImage) {
           document.body.style.backgroundImage = `url(${colors.bgImage})`;

@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const customizeScreen = document.getElementById('customize-screen');
   const nameColorPicker = document.getElementById('name-color-picker');
   const buttonColorPicker = document.getElementById('button-color-picker');
+  const buttonTextColorPicker = document.getElementById('button-text-color-picker');
   const bgColorPicker = document.getElementById('bg-color-picker');
   const panelColorPicker = document.getElementById('panel-color-picker');
   const bgImageUrl = document.getElementById('bg-image-url');
@@ -27,9 +28,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const clearBgImageBtn = document.getElementById('clear-bg-image-btn');
   const nameColorPreview = document.getElementById('name-color-preview');
   const buttonColorPreview = document.getElementById('button-color-preview');
+  const buttonTextColorPreview = document.getElementById('button-text-color-preview');
   const bgColorPreview = document.getElementById('bg-color-preview');
   const panelColorPreview = document.getElementById('panel-color-preview');
   const bgImagePreview = document.getElementById('bg-image-preview');
+  const uiOpacitySlider = document.getElementById('ui-opacity-slider');
+  const buttonOpacitySlider = document.getElementById('button-opacity-slider');
+  const textOpacitySlider = document.getElementById('text-opacity-slider');
+  const uiOpacityValue = document.getElementById('ui-opacity-value');
+  const buttonOpacityValue = document.getElementById('button-opacity-value');
+  const textOpacityValue = document.getElementById('text-opacity-value');
   const saveColorsBtn = document.getElementById('save-colors-btn');
   const resetColorsBtn = document.getElementById('reset-colors-btn');
   const backToStartCustomizeBtn = document.getElementById('back-to-start-customize-btn');
@@ -57,6 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const mainChatPanel = document.getElementById('main-chat-panel');
   const threadsPanel = document.getElementById('threads-panel');
   const dmsPanel = document.getElementById('dms-panel');
+  const threadsTab = document.getElementById('threads-tab');
 
   // Threads
   const threadsList = document.getElementById('threads-list');
@@ -90,6 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const threads = new Map();
   let currentThread = null;
   let currentDM = null;
+  const sentDMMessages = new Set(); // ✅ FIX: Track sent DM messages to prevent duplicates
 
   // ===== AUDIO =====
   window.audioContext = null;
@@ -307,20 +317,38 @@ document.addEventListener('DOMContentLoaded', () => {
       const colors = JSON.parse(savedColors);
       if (nameColorPicker) nameColorPicker.value = colors.nameColor || '#4cc9f0';
       if (buttonColorPicker) buttonColorPicker.value = colors.buttonColor || '#e94560';
+      if (buttonTextColorPicker) buttonTextColorPicker.value = colors.buttonTextColor || '#ffffff';
       if (bgColorPicker) bgColorPicker.value = colors.bgColor || '#1a1a2e';
       if (panelColorPicker) panelColorPicker.value = colors.panelColor || '#16213e';
       if (bgImageUrl) bgImageUrl.value = colors.bgImage || '';
+      if (uiOpacitySlider) uiOpacitySlider.value = colors.uiOpacity || '1';
+      if (buttonOpacitySlider) buttonOpacitySlider.value = colors.buttonOpacity || '1';
+      if (textOpacitySlider) textOpacitySlider.value = colors.textOpacity || '1';
     }
     updateColorPreviews();
+    updateOpacityValues();
   }
 
   function updateColorPreviews() {
     if (nameColorPreview) nameColorPreview.style.background = nameColorPicker?.value || '#4cc9f0';
     if (buttonColorPreview) buttonColorPreview.style.background = buttonColorPicker?.value || '#e94560';
+    if (buttonTextColorPreview) buttonTextColorPreview.style.background = buttonTextColorPicker?.value || '#ffffff';
     if (bgColorPreview) bgColorPreview.style.background = bgColorPicker?.value || '#1a1a2e';
     if (panelColorPreview) panelColorPreview.style.background = panelColorPicker?.value || '#16213e';
     if (bgImagePreview && bgImageUrl?.value) {
       bgImagePreview.style.backgroundImage = `url(${bgImageUrl.value})`;
+    }
+  }
+
+  function updateOpacityValues() {
+    if (uiOpacitySlider && uiOpacityValue) {
+      uiOpacityValue.textContent = Math.round(uiOpacitySlider.value * 100) + '%';
+    }
+    if (buttonOpacitySlider && buttonOpacityValue) {
+      buttonOpacityValue.textContent = Math.round(buttonOpacitySlider.value * 100) + '%';
+    }
+    if (textOpacitySlider && textOpacityValue) {
+      textOpacityValue.textContent = Math.round(textOpacitySlider.value * 100) + '%';
     }
   }
 
@@ -335,6 +363,13 @@ document.addEventListener('DOMContentLoaded', () => {
     buttonColorPicker.addEventListener('input', () => {
       updateColorPreviews();
       document.documentElement.style.setProperty('--pixel-accent', buttonColorPicker.value);
+    });
+  }
+
+  if (buttonTextColorPicker) {
+    buttonTextColorPicker.addEventListener('input', () => {
+      updateColorPreviews();
+      document.documentElement.style.setProperty('--pixel-btn-text', buttonTextColorPicker.value);
     });
   }
 
@@ -379,14 +414,39 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  if (uiOpacitySlider) {
+    uiOpacitySlider.addEventListener('input', () => {
+      updateOpacityValues();
+      document.documentElement.style.setProperty('--ui-opacity', uiOpacitySlider.value);
+    });
+  }
+
+  if (buttonOpacitySlider) {
+    buttonOpacitySlider.addEventListener('input', () => {
+      updateOpacityValues();
+      document.documentElement.style.setProperty('--button-opacity', buttonOpacitySlider.value);
+    });
+  }
+
+  if (textOpacitySlider) {
+    textOpacitySlider.addEventListener('input', () => {
+      updateOpacityValues();
+      document.documentElement.style.setProperty('--text-opacity', textOpacitySlider.value);
+    });
+  }
+
   if (saveColorsBtn) {
     saveColorsBtn.addEventListener('click', () => {
       const colors = {
         nameColor: nameColorPicker?.value || '#4cc9f0',
         buttonColor: buttonColorPicker?.value || '#e94560',
+        buttonTextColor: buttonTextColorPicker?.value || '#ffffff',
         bgColor: bgColorPicker?.value || '#1a1a2e',
         panelColor: panelColorPicker?.value || '#16213e',
-        bgImage: bgImageUrl?.value || ''
+        bgImage: bgImageUrl?.value || '',
+        uiOpacity: uiOpacitySlider?.value || '1',
+        buttonOpacity: buttonOpacitySlider?.value || '1',
+        textOpacity: textOpacitySlider?.value || '1'
       };
       localStorage.setItem('pixelChatColors', JSON.stringify(colors));
       
@@ -400,6 +460,11 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.style.backgroundImage = '';
       }
       
+      // Apply opacity
+      document.documentElement.style.setProperty('--ui-opacity', colors.uiOpacity);
+      document.documentElement.style.setProperty('--button-opacity', colors.buttonOpacity);
+      document.documentElement.style.setProperty('--text-opacity', colors.textOpacity);
+      
       addSystemMessage('💾 Colors saved!');
       playSystemSound('send');
     });
@@ -409,15 +474,24 @@ document.addEventListener('DOMContentLoaded', () => {
     resetColorsBtn.addEventListener('click', () => {
       if (nameColorPicker) nameColorPicker.value = '#4cc9f0';
       if (buttonColorPicker) buttonColorPicker.value = '#e94560';
+      if (buttonTextColorPicker) buttonTextColorPicker.value = '#ffffff';
       if (bgColorPicker) bgColorPicker.value = '#1a1a2e';
       if (panelColorPicker) panelColorPicker.value = '#16213e';
       if (bgImageUrl) bgImageUrl.value = '';
+      if (uiOpacitySlider) uiOpacitySlider.value = '1';
+      if (buttonOpacitySlider) buttonOpacitySlider.value = '1';
+      if (textOpacitySlider) textOpacitySlider.value = '1';
       updateColorPreviews();
+      updateOpacityValues();
       
       document.documentElement.style.setProperty('--pixel-success', '#4cc9f0');
       document.documentElement.style.setProperty('--pixel-accent', '#e94560');
+      document.documentElement.style.setProperty('--pixel-btn-text', '#ffffff');
       document.documentElement.style.setProperty('--pixel-bg', '#1a1a2e');
       document.documentElement.style.setProperty('--pixel-panel', '#16213e');
+      document.documentElement.style.setProperty('--ui-opacity', '1');
+      document.documentElement.style.setProperty('--button-opacity', '1');
+      document.documentElement.style.setProperty('--text-opacity', '1');
       document.body.style.backgroundImage = '';
       
       localStorage.removeItem('pixelChatColors');
@@ -624,35 +698,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (replyUsernameEl) replyUsernameEl.textContent = '';
   }
 
-  // ===== REACTIONS =====
-  if (messagesEl) {
-    messagesEl.addEventListener('click', (e) => {
-      const btn = e.target.closest('.add-reaction-btn');
-      if (btn) {
-        const messageEl = btn.closest('.message');
-        selectedMessageId = messageEl.dataset.id;
-        const reactionPicker = document.getElementById('reaction-picker');
-        if (reactionPicker) reactionPicker.classList.toggle('hidden');
-      }
-    });
-  }
-
-  document.querySelectorAll('.reaction-emoji').forEach(emoji => {
-    emoji.addEventListener('click', () => {
-      if (selectedMessageId && currentRoom) {
-        socket.emit('addReaction', {
-          roomName: currentRoom,
-          messageId: selectedMessageId,
-          emoji: emoji.dataset.emoji,
-          username: myUsername
-        });
-        const reactionPicker = document.getElementById('reaction-picker');
-        if (reactionPicker) reactionPicker.classList.add('hidden');
-        selectedMessageId = null;
-      }
-    });
-  });
-
   // ===== SOUNDBOARD =====
   if (soundboardBtn) {
     soundboardBtn.addEventListener('click', () => {
@@ -741,10 +786,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const message = dmMessageInput.value.trim();
     if (!message) return;
     
+    // ✅ FIX: Create unique message ID to track
+    const messageId = Date.now() + '-dm-' + Math.random().toString(36).substr(2, 9);
+    sentDMMessages.add(messageId);
+    
     socket.emit('privateMessage', {
       toUserId: currentDM.userId,
       fromUsername: myUsername,
-      message
+      message,
+      messageId // ✅ Track message ID
+    });
+    
+    // ✅ Add locally immediately
+    addDMMessage({
+      from: mySocketId,
+      fromUsername: myUsername,
+      message,
+      timestamp: new Date().toLocaleTimeString(),
+      id: messageId
     });
     
     dmMessageInput.value = '';
@@ -780,14 +839,6 @@ document.addEventListener('DOMContentLoaded', () => {
     playSystemSound('receive');
   });
 
-  socket.on('reactionAdded', ({ messageId, emoji, username, socketId }) => {
-    updateMessageReactions(messageId, emoji, username, socketId, 'add');
-  });
-
-  socket.on('reactionRemoved', ({ messageId, emoji, username, socketId }) => {
-    updateMessageReactions(messageId, emoji, username, socketId, 'remove');
-  });
-
   socket.on('systemMessage', ({ text }) => {
     addSystemMessage(text);
     scrollToBottom();
@@ -820,6 +871,8 @@ document.addEventListener('DOMContentLoaded', () => {
     threads.set(threadId, { id: threadId, name: threadName, messages: [] });
     addSystemMessage(`🧵 ${createdBy} created thread: ${threadName}`);
     updateThreadsList();
+    // ✅ Show threads tab now
+    if (threadsTab) threadsTab.classList.remove('hidden');
   });
 
   socket.on('threadMessage', (data) => {
@@ -837,8 +890,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // DM events
+  // DM events - ✅ FIX: Prevent duplicate messages
   socket.on('privateMessage', (data) => {
+    // ✅ Check if we already sent this message
+    if (data.messageId && sentDMMessages.has(data.messageId)) {
+      console.log('⚠️ Duplicate DM message ignored:', data.messageId);
+      return;
+    }
+    
     if (currentDM && (data.from === currentDM.userId || data.to === mySocketId)) {
       addDMMessage(data);
       playSystemSound('receive');
@@ -861,59 +920,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ===== HELPERS =====
-  function updateMessageReactions(messageId, emoji, username, socketId, action) {
-    if (!messageReactions.has(messageId)) {
-      messageReactions.set(messageId, {});
-    }
-    
-    const reactions = messageReactions.get(messageId);
-    if (!reactions[emoji]) reactions[emoji] = new Set();
-    
-    if (action === 'add') {
-      reactions[emoji].add(socketId);
-    } else {
-      reactions[emoji].delete(socketId);
-    }
-    
-    const messageEl = document.querySelector(`.message[data-id="${messageId}"]`);
-    if (messageEl) {
-      renderReactions(messageEl, reactions);
-    }
-  }
-
-  function renderReactions(messageEl, reactions) {
-    let reactionsContainer = messageEl.querySelector('.reactions');
-    if (!reactionsContainer) {
-      reactionsContainer = document.createElement('div');
-      reactionsContainer.className = 'reactions';
-      messageEl.appendChild(reactionsContainer);
-    }
-    
-    reactionsContainer.innerHTML = '';
-    
-    for (const [emoji, users] of Object.entries(reactions)) {
-      if (users.size === 0) continue;
-      const reactionEl = document.createElement('span');
-      reactionEl.className = 'reaction';
-      reactionEl.innerHTML = `<span class="emoji">${emoji}</span><span class="count">${users.size}</span>`;
-      reactionEl.addEventListener('click', () => {
-        if (currentRoom && messageEl.dataset.id) {
-          socket.emit('removeReaction', {
-            roomName: currentRoom,
-            messageId: messageEl.dataset.id,
-            emoji,
-            username: myUsername
-          });
-        }
-      });
-      reactionsContainer.appendChild(reactionEl);
-    }
-    
-    if (reactionsContainer.children.length === 0) {
-      reactionsContainer.remove();
-    }
-  }
-
   function parseMarkdown(text) {
     if (!text) return '';
     let escaped = escapeHtml(text);
@@ -960,7 +966,6 @@ document.addEventListener('DOMContentLoaded', () => {
       <span class="create-thread-btn" title="Create Thread">🧵</span>
     `;
     
-    // Thread creation - only on hover
     const threadBtn = msgEl.querySelector('.create-thread-btn');
     if (threadBtn) {
       threadBtn.addEventListener('click', (e) => {
@@ -977,13 +982,11 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
     
-    // Reaction button
     const reactionBtn = msgEl.querySelector('.add-reaction-btn');
     if (reactionBtn) {
       reactionBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         selectedMessageId = data.id;
-        // Simple reaction (thumbs up for now)
         socket.emit('addReaction', {
           roomName: currentRoom,
           messageId: data.id,
@@ -991,11 +994,6 @@ document.addEventListener('DOMContentLoaded', () => {
           username: myUsername
         });
       });
-    }
-    
-    if (data.reactions) {
-      messageReactions.set(data.id, data.reactions);
-      renderReactions(msgEl, data.reactions);
     }
     
     messagesEl.appendChild(msgEl);
@@ -1055,11 +1053,18 @@ document.addEventListener('DOMContentLoaded', () => {
     dmUsernameEl.textContent = username;
     dmChat.classList.remove('hidden');
     dmUsersList.classList.add('hidden');
+    sentDMMessages.clear(); // ✅ Clear sent messages when switching DM
     socket.emit('getDMHistory', { userId });
   }
 
   function addDMMessage(data) {
     if (!dmMessagesEl) return;
+    
+    // ✅ Check for duplicates
+    if (data.id && sentDMMessages.has(data.id)) {
+      return;
+    }
+    if (data.id) sentDMMessages.add(data.id);
     
     const msgEl = document.createElement('div');
     msgEl.className = 'message';
@@ -1158,7 +1163,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ===== INIT =====
   console.log('🎮 Pixel Chat Ready!');
   console.log('🔌 Socket:', socket.connected ? 'Connected' : 'Disconnected');
-  console.log('🧵 Threads: Enabled');
+  console.log('🧵 Threads: Enabled (hidden until created)');
   console.log('📩 DMs: Enabled');
   console.log('🎵 Soundboard: Enabled');
   showServerURL();
