@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const server = http.createServer(app);
@@ -20,7 +21,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Data structures
 const rooms = new Map();
+const threads = new Map();
+const privateMessages = new Map();
+const users = new Map(); // socketId -> userInfo
 
 function isValidImage(dataUrl) {
   if (!dataUrl || typeof dataUrl !== 'string') return false;
@@ -32,57 +37,63 @@ function isValidImage(dataUrl) {
 
 io.on('connection', (socket) => {
   console.log(`🔌 Player connected: ${socket.id}`);
+  
+  users.set(socket.id, { socketId: socket.id });
 
+  // Join room
   socket.on('joinRoom', ({ roomName, username, isHost }) => {
     socket.join(roomName);
+    
+    const userInfo = {
+      id: socket.id,
+      username,
+      isHost: isHost || false,
+      room: roomName,
+      status: 'online'
+    };
+    users.set(socket.id, userInfo);
     
     if (!rooms.has(roomName)) {
       rooms.set(roomName, new Set());
     }
-    
-    const existingUser = Array.from(rooms.get(roomName)).find(u => u.id === socket.id);
-    if (!existingUser) {
-      rooms.get(roomName).add({ id: socket.id, username, isHost: isHost || false });
-    }
+    rooms.get(roomName).add(userInfo);
 
     socket.to(roomName).emit('systemMessage', {
       text: `✨ ${username} has entered the chat!`,
       timestamp: new Date().toLocaleTimeString()
     });
 
-    const users = Array.from(rooms.get(roomName)).map(u => ({
+    const roomUsers = Array.from(rooms.get(roomName)).map(u => ({
       username: u.username,
       isHost: u.isHost,
-      id: u.id
+      id: u.id,
+      status: u.status
     }));
     
-    io.to(roomName).emit('updateUsers', users);
+    io.to(roomName).emit('updateUsers', roomUsers);
+    socket.emit('updateRoomList', Array.from(rooms.keys()));
     
     socket.emit('joinedRoom', { 
       roomName, 
-      users, 
+      users: roomUsers, 
       socketId: socket.id,
       isHost: isHost || false
     });
     
-    console.log(`🚪 ${username} joined room: ${roomName}${isHost ? ' (HOST)' : ''}`);
+    console.log(`🚪 ${username} joined room: ${roomName}`);
   });
 
+  // Chat message
   socket.on('chatMessage', ({ roomName, username, message, image, replyTo }) => {
     if (!message?.trim() && !image) return;
     
     if (image && !isValidImage(image)) {
-      socket.emit('error', '⚠️ Invalid image format. Supported: PNG, JPG, GIF, WebP');
-      return;
-    }
-
-    if (image && image.length > MAX_IMAGE_SIZE * 1.33) {
-      socket.emit('error', `⚠️ Image too large! Max ${MAX_IMAGE_SIZE / 1024 / 1024}MB`);
+      socket.emit('error', '⚠️ Invalid image format');
       return;
     }
 
     const messageData = {
-      id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+      id: uuidv4(),
       username,
       message: message?.trim() || '',
       image: image || null,
@@ -93,22 +104,132 @@ io.on('connection', (socket) => {
     };
 
     socket.to(roomName).emit('chatMessage', messageData);
-    
-    console.log(`💬 [${roomName}] ${username}: ${message?.substring(0, 50) || ''}${image ? ' [IMAGE]' : ''}`);
+    console.log(`💬 [${roomName}] ${username}: ${message?.substring(0, 50) || ''}`);
   });
 
-  socket.on('addReaction', ({ roomName, messageId, emoji, username }) => {
-    const room = rooms.get(roomName);
-    if (!room) return;
+  // Create thread
+  socket.on('createThread', ({ roomName, parentMessageId, threadName, username }) => {
+    const threadId = uuidv4();
+    const thread = {
+      id: threadId,
+      room: roomName,
+      parentMessageId,
+      name: threadName || `Thread ${threads.size + 1}`,
+      messages: [],
+      participants: new Set([socket.id]),
+      createdAt: new Date().toISOString()
+    };
     
+    threads.set(threadId, thread);
+    socket.join(`thread-${threadId}`);
+    
+    io.to(roomName).emit('threadCreated', {
+      threadId,
+      threadName: thread.name,
+      parentMessageId,
+      createdBy: username
+    });
+    
+    console.log(`🧵 Thread created: ${thread.name}`);
+  });
+
+  // Thread message
+  socket.on('threadMessage', ({ threadId, username, message, image }) => {
+    const thread = threads.get(threadId);
+    if (!thread) return;
+    
+    const messageData = {
+      id: uuidv4(),
+      username,
+      message: message?.trim() || '',
+      image: image || null,
+      timestamp: new Date().toLocaleTimeString(),
+      senderId: socket.id
+    };
+    
+    thread.messages.push(messageData);
+    socket.to(`thread-${threadId}`).emit('threadMessage', messageData);
+    socket.emit('threadMessage', messageData); // Send to self
+  });
+
+  // Join/leave thread
+  socket.on('joinThread', ({ threadId }) => {
+    const thread = threads.get(threadId);
+    if (thread) {
+      thread.participants.add(socket.id);
+      socket.join(`thread-${threadId}`);
+      socket.emit('threadMessages', thread.messages);
+    }
+  });
+
+  socket.on('leaveThread', ({ threadId }) => {
+    const thread = threads.get(threadId);
+    if (thread) {
+      thread.participants.delete(socket.id);
+      socket.leave(`thread-${threadId}`);
+    }
+  });
+
+  // Private message
+  socket.on('privateMessage', ({ toUserId, fromUsername, message, image }) => {
+    const dmId = [socket.id, toUserId].sort().join('-');
+    
+    const messageData = {
+      id: uuidv4(),
+      from: socket.id,
+      fromUsername,
+      to: toUserId,
+      message: message?.trim() || '',
+      image: image || null,
+      timestamp: new Date().toLocaleTimeString()
+    };
+    
+    if (!privateMessages.has(dmId)) {
+      privateMessages.set(dmId, []);
+    }
+    privateMessages.get(dmId).push(messageData);
+    
+    // Send to recipient if online
+    io.to(toUserId).emit('privateMessage', messageData);
+    socket.emit('privateMessage', messageData);
+    
+    console.log(`📩 DM from ${fromUsername} to ${toUserId}`);
+  });
+
+  // Get DM history
+  socket.on('getDMHistory', ({ userId }) => {
+    const dmId = [socket.id, userId].sort().join('-');
+    const history = privateMessages.get(dmId) || [];
+    socket.emit('dmHistory', { userId, messages: history });
+  });
+
+  // Voice chat signaling (WebRTC)
+  socket.on('voiceOffer', ({ offer, targetUserId, fromUsername }) => {
+    socket.to(targetUserId).emit('voiceOffer', { offer, fromUserId: socket.id, fromUsername });
+  });
+
+  socket.on('voiceAnswer', ({ answer, targetUserId }) => {
+    socket.to(targetUserId).emit('voiceAnswer', { answer, fromUserId: socket.id });
+  });
+
+  socket.on('iceCandidate', ({ candidate, targetUserId }) => {
+    socket.to(targetUserId).emit('iceCandidate', { candidate, fromUserId: socket.id });
+  });
+
+  // Soundboard
+  socket.on('playSound', ({ roomName, soundId, username }) => {
+    socket.to(roomName).emit('playSound', { soundId, username });
+    console.log(`🔊 ${username} played sound ${soundId}`);
+  });
+
+  // Reactions
+  socket.on('addReaction', ({ roomName, messageId, emoji, username }) => {
     io.to(roomName).emit('reactionAdded', {
       messageId,
       emoji,
       username,
       socketId: socket.id
     });
-    
-    console.log(`😊 ${username} reacted ${emoji} to message ${messageId}`);
   });
 
   socket.on('removeReaction', ({ roomName, messageId, emoji, username }) => {
@@ -120,33 +241,44 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Typing
   socket.on('typing', ({ roomName, username, isTyping }) => {
     socket.to(roomName).emit('userTyping', { username, isTyping });
   });
 
+  // Disconnect
   socket.on('disconnect', () => {
-    for (const [roomName, users] of rooms) {
-      const user = Array.from(users).find(u => u.id === socket.id);
+    console.log(`🔌 Player disconnected: ${socket.id}`);
+    
+    for (const [roomName, roomUsers] of rooms) {
+      const user = Array.from(roomUsers).find(u => u.id === socket.id);
       if (user) {
-        users.delete(user);
+        roomUsers.delete(user);
         socket.to(roomName).emit('systemMessage', {
           text: `💨 ${user.username} has left the chat`,
           timestamp: new Date().toLocaleTimeString()
         });
         io.to(roomName).emit('updateUsers', 
-          Array.from(users).map(u => ({ username: u.username, isHost: u.isHost, id: u.id }))
+          Array.from(roomUsers).map(u => ({
+            username: u.username,
+            isHost: u.isHost,
+            id: u.id,
+            status: u.status
+          }))
         );
-        if (users.size === 0) rooms.delete(roomName);
-        console.log(`🚪 ${user.username} disconnected from ${roomName}`);
-        break;
+        if (roomUsers.size === 0) rooms.delete(roomName);
       }
     }
+    
+    users.delete(socket.id);
   });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🎮 Pixel Chat Server running on http://localhost:${PORT}`);
-  console.log(`📸 Image upload limit: ${MAX_IMAGE_SIZE / 1024 / 1024}MB`);
-  console.log(`🌐 Deployed to Render for 24/7 hosting!`);
+  console.log(`🎮 Pixel Chat Ultimate running on http://localhost:${PORT}`);
+  console.log(`🧵 Threads enabled`);
+  console.log(`📩 Private messages enabled`);
+  console.log(`🎤 Voice chat enabled`);
+  console.log(`🔊 Soundboard enabled`);
 });

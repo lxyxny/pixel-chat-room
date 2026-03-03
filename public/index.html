@@ -3,32 +3,33 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>🎮 Pixel Chat</title>
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <title>🎮 Pixel Chat Ultimate</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="pixel-container">
+  <div class="animated-bg"></div>
+  <div class="pixel-container glass-effect">
     
     <!-- START MENU -->
     <div id="start-screen" class="screen active">
-      <h1 class="pixel-title">PIXEL CHAT</h1>
+      <h1 class="pixel-title glitch" data-text="PIXEL CHAT ULTIMATE">PIXEL CHAT ULTIMATE</h1>
       <div class="pixel-box start-menu">
-        <button id="join-room-btn" class="pixel-btn">🚪 JOIN ROOM</button>
-        <button id="host-room-btn" class="pixel-btn">🏠 HOST ROOM</button>
-        <button id="customize-btn" class="pixel-btn">🎨 CUSTOMIZE</button>
+        <button id="join-room-btn" class="pixel-btn glow-effect">🚪 JOIN ROOM</button>
+        <button id="host-room-btn" class="pixel-btn glow-effect">🏠 HOST ROOM</button>
+        <button id="customize-btn" class="pixel-btn glow-effect">🎨 CUSTOMIZE</button>
       </div>
       <p class="pixel-hint">Choose your adventure!</p>
-      <p class="pixel-hint" id="server-url" style="color: var(--pixel-accent); font-size: 7px;"></p>
+      <p class="pixel-hint server-url" id="server-url"></p>
     </div>
 
-    <!-- JOIN/HOST ROOM SCREEN -->
+    <!-- ROOM SCREEN -->
     <div id="room-screen" class="screen">
       <h1 class="pixel-title" id="room-title">JOIN ROOM</h1>
       <div class="pixel-box">
         <input type="text" id="username-input" placeholder="ENTER NAME..." maxlength="12" autocomplete="off"/>
         <input type="text" id="room-input" placeholder="ROOM CODE..." maxlength="16" autocomplete="off"/>
-        <button id="enter-room-btn" class="pixel-btn">▶ ENTER</button>
+        <button id="enter-room-btn" class="pixel-btn glow-effect">▶ ENTER</button>
         <button id="back-to-start-btn" class="pixel-btn">↩ BACK</button>
       </div>
       <p class="pixel-hint">Press ENTER to join</p>
@@ -41,48 +42,29 @@
         <div class="customize-section">
           <h3 class="pixel-label">NAME COLOR</h3>
           <input type="color" id="name-color-picker" value="#4cc9f0" />
-          <div class="color-preview" id="name-color-preview"></div>
         </div>
-        
         <div class="customize-section">
           <h3 class="pixel-label">BUTTON COLOR</h3>
           <input type="color" id="button-color-picker" value="#e94560" />
-          <div class="color-preview" id="button-color-preview"></div>
         </div>
-        
         <div class="customize-section">
           <h3 class="pixel-label">BACKGROUND COLOR</h3>
           <input type="color" id="bg-color-picker" value="#1a1a2e" />
-          <div class="color-preview" id="bg-color-preview"></div>
         </div>
-        
-        <div class="customize-section">
-          <h3 class="pixel-label">BACKGROUND IMAGE</h3>
-          <input type="text" id="bg-image-url" placeholder="Paste image URL..." />
-          <label for="bg-image-upload" class="pixel-btn small">📁 UPLOAD IMAGE</label>
-          <input type="file" id="bg-image-upload" accept="image/*" hidden />
-          <button id="clear-bg-image-btn" class="pixel-btn small">🗑️ CLEAR</button>
-          <div class="color-preview" id="bg-image-preview"></div>
-        </div>
-        
-        <div class="customize-section">
-          <h3 class="pixel-label">PANEL COLOR</h3>
-          <input type="color" id="panel-color-picker" value="#16213e" />
-          <div class="color-preview" id="panel-color-preview"></div>
-        </div>
-        
-        <button id="save-colors-btn" class="pixel-btn">💾 SAVE</button>
-        <button id="reset-colors-btn" class="pixel-btn">🔄 RESET</button>
+        <button id="save-colors-btn" class="pixel-btn glow-effect">💾 SAVE</button>
         <button id="back-to-start-customize-btn" class="pixel-btn">↩ BACK</button>
       </div>
     </div>
 
-    <!-- CHAT SCREEN -->
+    <!-- MAIN CHAT SCREEN -->
     <div id="chat-screen" class="screen">
-      <div class="chat-header">
-        <h2 class="pixel-subtitle">ROOM: <span id="room-display">---</span></h2>
-        <div class="header-actions">
+      <div class="chat-header glass-panel">
+        <div class="header-left">
+          <h2 class="pixel-subtitle">ROOM: <span id="room-display">---</span></h2>
           <span id="host-badge" class="host-badge hidden">👑 HOST</span>
+        </div>
+        <div class="header-actions">
+          <button id="voice-chat-btn" class="pixel-btn small voice-btn" title="Start Voice Chat">🎤</button>
           <button id="sound-toggle" class="pixel-btn small" title="Toggle Sound">🔊</button>
           <span id="typing-indicator" class="typing-indicator hidden"></span>
           <button id="leave-btn" class="pixel-btn small">✕ LEAVE</button>
@@ -90,44 +72,108 @@
       </div>
       
       <div class="chat-layout">
-        <div class="messages-panel">
-          <div id="messages" class="pixel-messages"></div>
-          
-          <div id="reply-preview" class="reply-preview hidden">
-            <span>REPLYING TO: <strong id="reply-username"></strong></span>
-            <button id="cancel-reply" class="pixel-btn tiny">✕</button>
+        <!-- Main Chat Area -->
+        <div class="main-chat">
+          <div class="chat-tabs">
+            <button class="tab-btn active" data-tab="main">💬 Main Chat</button>
+            <button class="tab-btn" data-tab="threads" id="threads-tab">🧵 Threads</button>
+            <button class="tab-btn" data-tab="dms" id="dms-tab">📩 DMs</button>
           </div>
           
-          <div id="reaction-picker" class="reaction-picker hidden">
-            <span class="reaction-emoji" data-emoji="👍">👍</span>
-            <span class="reaction-emoji" data-emoji="❤️">❤️</span>
-            <span class="reaction-emoji" data-emoji="😂">😂</span>
-            <span class="reaction-emoji" data-emoji="😮">😮</span>
-            <span class="reaction-emoji" data-emoji="😢">😢</span>
-            <span class="reaction-emoji" data-emoji="👎">👎</span>
-            <span class="reaction-emoji" data-emoji="🎉">🎉</span>
-            <span class="reaction-emoji" data-emoji="🔥">🔥</span>
+          <!-- Main Chat -->
+          <div id="main-chat-panel" class="chat-panel active">
+            <div id="messages" class="pixel-messages"></div>
+            <div id="reply-preview" class="reply-preview hidden">
+              <span>REPLYING TO: <strong id="reply-username"></strong></span>
+              <button id="cancel-reply" class="pixel-btn tiny">✕</button>
+            </div>
+            <div class="input-area">
+              <label for="image-upload" class="pixel-btn icon-btn" title="Upload">🖼️</label>
+              <input type="file" id="image-upload" accept="image/*" hidden />
+              <input type="text" id="message-input" placeholder="TYPE MESSAGE..." maxlength="500"/>
+              <button id="send-btn" class="pixel-btn glow-effect">▶ SEND</button>
+            </div>
           </div>
           
-          <div class="input-area">
-            <label for="image-upload" class="pixel-btn icon-btn" title="Upload Image/GIF">🖼️</label>
-            <input type="file" id="image-upload" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" hidden />
-            <input type="text" id="message-input" placeholder="TYPE MESSAGE... (*italic* **bold**)" maxlength="500" autocomplete="off"/>
-            <button id="send-btn" class="pixel-btn">▶ SEND</button>
+          <!-- Threads Panel -->
+          <div id="threads-panel" class="chat-panel">
+            <div id="threads-list" class="threads-list"></div>
+            <div id="thread-view" class="thread-view hidden">
+              <div class="thread-header">
+                <button id="close-thread-btn" class="pixel-btn small">← Back</button>
+                <h3 id="thread-name" class="thread-name"></h3>
+              </div>
+              <div id="thread-messages" class="thread-messages"></div>
+              <div class="thread-input">
+                <input type="text" id="thread-message-input" placeholder="Reply in thread..."/>
+                <button id="send-thread-btn" class="pixel-btn small">Send</button>
+              </div>
+            </div>
           </div>
-          <p class="pixel-hint">💡 *italic* **bold** ***both*** | Double-click to reply | Hover for reactions</p>
+          
+          <!-- DMs Panel -->
+          <div id="dms-panel" class="chat-panel">
+            <div id="dm-users-list" class="dm-users-list"></div>
+            <div id="dm-chat" class="dm-chat hidden">
+              <div class="dm-header">
+                <button id="close-dm-btn" class="pixel-btn small">← Back</button>
+                <h3 id="dm-username" class="dm-username"></h3>
+              </div>
+              <div id="dm-messages" class="dm-messages"></div>
+              <div class="dm-input">
+                <input type="text" id="dm-message-input" placeholder="Send private message..."/>
+                <button id="send-dm-btn" class="pixel-btn small">Send</button>
+              </div>
+            </div>
+          </div>
         </div>
         
-        <div class="users-panel">
-          <h3 class="pixel-label">PLAYERS</h3>
-          <ul id="user-list" class="pixel-list"></ul>
+        <!-- Sidebar -->
+        <div class="sidebar glass-panel">
+          <div class="sidebar-section">
+            <h3 class="pixel-label">PLAYERS <span id="user-count">0</span></h3>
+            <ul id="user-list" class="pixel-list"></ul>
+          </div>
+          
+          <!-- Voice Chat Panel -->
+          <div id="voice-panel" class="voice-panel hidden">
+            <h3 class="pixel-label">🎤 VOICE CHAT</h3>
+            <div id="voice-participants" class="voice-participants"></div>
+            <div class="voice-controls">
+              <button id="toggle-mic-btn" class="pixel-btn small">🎤 Mute</button>
+              <button id="leave-voice-btn" class="pixel-btn small danger">Leave</button>
+            </div>
+            
+            <!-- Soundboard -->
+            <div class="soundboard">
+              <h4 class="pixel-label">🔊 SOUNDBOARD</h4>
+              <div class="sound-buttons">
+                <button class="sound-btn" data-sound="airhorn">📯</button>
+                <button class="sound-btn" data-sound="bruh">😒</button>
+                <button class="sound-btn" data-sound="wow">😮</button>
+                <button class="sound-btn" data-sound="laugh">😂</button>
+                <button class="sound-btn" data-sound="clap">👏</button>
+                <button class="sound-btn" data-sound="sad">😢</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
   </div>
 
+  <!-- Voice Chat Modal -->
+  <div id="voice-modal" class="modal hidden">
+    <div class="modal-content glass-panel">
+      <h2>🎤 Voice Chat</h2>
+      <p>Connecting to voice channel...</p>
+      <button id="cancel-voice-btn" class="pixel-btn">Cancel</button>
+    </div>
+  </div>
+
   <script>
+    // Load saved colors
     const savedColors = localStorage.getItem('pixelChatColors');
     if (savedColors) {
       const colors = JSON.parse(savedColors);
@@ -135,18 +181,11 @@
       document.documentElement.style.setProperty('--pixel-accent', colors.buttonColor || '#e94560');
       document.documentElement.style.setProperty('--pixel-bg', colors.bgColor || '#1a1a2e');
       document.documentElement.style.setProperty('--pixel-panel', colors.panelColor || '#16213e');
-      
-      if (colors.bgImage) {
-        document.body.style.backgroundImage = `url(${colors.bgImage})`;
-        document.body.style.backgroundSize = 'cover';
-        document.body.style.backgroundPosition = 'center';
-        document.body.style.backgroundAttachment = 'fixed';
-      }
     }
     
-    const serverUrlEl = document.getElementById('server-url');
-    if (serverUrlEl && window.location.hostname !== 'localhost') {
-      serverUrlEl.textContent = `🌐 ${window.location.origin}`;
+    if (window.location.hostname !== 'localhost') {
+      const el = document.getElementById('server-url');
+      if (el) el.textContent = `🌐 ${window.location.origin}`;
     }
     
     window.audioContext = null;
@@ -157,20 +196,7 @@
         try {
           window.audioContext = new (window.AudioContext || window.webkitAudioContext)();
           window.audioEnabled = true;
-        } catch(e) {
-          console.warn('Audio not supported');
-        }
-      }
-    }, { once: true });
-    
-    document.addEventListener('keydown', () => {
-      if (!window.audioContext) {
-        try {
-          window.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-          window.audioEnabled = true;
-        } catch(e) {
-          console.warn('Audio not supported');
-        }
+        } catch(e) { console.warn('Audio not supported'); }
       }
     }, { once: true });
   </script>
