@@ -95,6 +95,12 @@
           <span id="text-opacity-value">100%</span>
         </div>
         
+        <div class="customize-section">
+          <h3 class="pixel-label">SHOW AVATARS</h3>
+          <input type="checkbox" id="show-avatars-toggle" checked />
+          <span>Display user avatars in chat</span>
+        </div>
+        
         <button id="save-colors-btn" class="pixel-btn">💾 SAVE</button>
         <button id="reset-colors-btn" class="pixel-btn">🔄 RESET</button>
         <button id="back-to-start-customize-btn" class="pixel-btn">↩ BACK</button>
@@ -196,6 +202,72 @@
 
   </div>
 
+  <!-- PROFILE MODAL -->
+  <div id="profile-modal" class="modal hidden">
+    <div class="modal-content glass-panel">
+      <div class="modal-header">
+        <h2 id="profile-username" class="pixel-title">USERNAME</h2>
+        <button id="close-profile-btn" class="pixel-btn small">✕</button>
+      </div>
+      
+      <div class="profile-content">
+        <div class="profile-avatar">
+          <img id="profile-avatar-img" src="" alt="Avatar" />
+          <div class="avatar-placeholder" id="avatar-placeholder">👤</div>
+        </div>
+        
+        <div class="profile-stats">
+          <div class="stat-row">
+            <span class="stat-label">Role:</span>
+            <span id="profile-role" class="stat-value">Member</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Status:</span>
+            <span id="profile-status" class="stat-value">Online</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Rooms Joined:</span>
+            <span id="profile-rooms" class="stat-value">0</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Messages Sent:</span>
+            <span id="profile-messages" class="stat-value">0</span>
+          </div>
+        </div>
+        
+        <!-- Owner Controls -->
+        <div id="owner-controls" class="owner-controls hidden">
+          <h3 class="pixel-label">👑 OWNER CONTROLS</h3>
+          <button id="set-mod-btn" class="pixel-btn small">⭐ Make Moderator</button>
+          <button id="kick-btn" class="pixel-btn small danger">👢 Kick</button>
+          <button id="ban-btn" class="pixel-btn small danger">🚫 Ban</button>
+          <button id="unban-btn" class="pixel-btn small hidden">✅ Unban</button>
+        </div>
+        
+        <!-- Moderator Controls -->
+        <div id="mod-controls" class="mod-controls hidden">
+          <h3 class="pixel-label">🛡️ MODERATOR CONTROLS</h3>
+          <button id="mod-kick-btn" class="pixel-btn small danger">👢 Kick</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROOM CONTROLS MODAL (Owner Only) -->
+  <div id="room-controls-modal" class="modal hidden">
+    <div class="modal-content glass-panel">
+      <div class="modal-header">
+        <h2 class="pixel-title">👑 ROOM CONTROLS</h2>
+        <button id="close-room-controls-btn" class="pixel-btn small">✕</button>
+      </div>
+      
+      <div class="profile-content">
+        <button id="delete-room-btn" class="pixel-btn danger">🗑️ DELETE ROOM</button>
+        <button id="view-banned-btn" class="pixel-btn">🚫 View Banned Users</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Load saved colors IMMEDIATELY
     const savedColors = localStorage.getItem('pixelChatColors');
@@ -210,6 +282,7 @@
         document.documentElement.style.setProperty('--ui-opacity', colors.uiOpacity || '1');
         document.documentElement.style.setProperty('--button-opacity', colors.buttonOpacity || '1');
         document.documentElement.style.setProperty('--text-opacity', colors.textOpacity || '1');
+        document.documentElement.style.setProperty('--show-avatars', colors.showAvatars !== false ? 'block' : 'none');
         
         if (colors.bgImage) {
           document.body.style.backgroundImage = `url(${colors.bgImage})`;

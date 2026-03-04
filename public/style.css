@@ -18,6 +18,7 @@
   --ui-opacity: 1;
   --button-opacity: 1;
   --text-opacity: 1;
+  --show-avatars: block;
 }
 
 body {
@@ -134,6 +135,13 @@ input[type="range"] {
   cursor: pointer;
 }
 
+input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin-right: calc(var(--pixel-size) * 2);
+  cursor: pointer;
+}
+
 .pixel-btn {
   background: var(--pixel-accent);
   color: var(--pixel-btn-text);
@@ -190,6 +198,14 @@ input[type="range"] {
 
 .pixel-btn.icon-btn:hover {
   background: var(--pixel-accent) !important;
+}
+
+.pixel-btn.danger {
+  background: #ff4757;
+}
+
+.pixel-btn.danger:hover {
+  background: #ff6b7a;
 }
 
 .start-menu {
@@ -326,6 +342,9 @@ input[type="range"] {
   background: rgba(15, 52, 96, 0.3);
   animation: slideIn 0.2s ease-out;
   position: relative;
+  display: flex;
+  gap: calc(var(--pixel-size) * 2);
+  align-items: flex-start;
 }
 
 .message:hover {
@@ -345,6 +364,39 @@ input[type="range"] {
   border-left-width: 2px;
 }
 
+.message .avatar {
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--pixel-border);
+  border-radius: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: var(--show-avatars);
+  background: var(--pixel-bg);
+}
+
+.message .avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+
+.message .avatar-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  background: var(--pixel-border);
+}
+
+.message .content {
+  flex: 1;
+  min-width: 0;
+}
+
 .message .meta {
   color: var(--pixel-dim);
   font-size: 7px;
@@ -356,6 +408,11 @@ input[type="range"] {
 .message .username {
   color: var(--pixel-success);
   font-weight: bold;
+  cursor: pointer;
+}
+
+.message .username:hover {
+  text-decoration: underline;
 }
 
 .message .text { 
@@ -471,6 +528,33 @@ input[type="range"] {
   opacity: 1;
 }
 
+.message .admin-actions {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.message:hover .admin-actions {
+  opacity: 1;
+}
+
+.admin-btn {
+  background: var(--pixel-accent);
+  border: 1px solid var(--pixel-border);
+  padding: 2px 4px;
+  font-size: 8px;
+  cursor: pointer;
+  color: var(--pixel-btn-text);
+}
+
+.admin-btn.danger {
+  background: #ff4757;
+}
+
 .reply-preview {
   background: rgba(233, 69, 96, 0.2);
   border: 2px solid var(--pixel-accent);
@@ -535,9 +619,55 @@ input[type="range"] {
   border-color: var(--pixel-accent);
 }
 
-.pixel-list li::before {
-  content: '👾';
+.pixel-list li .user-avatar {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--pixel-border);
+  border-radius: 2px;
+  overflow: hidden;
+  display: var(--show-avatars);
+  flex-shrink: 0;
+}
+
+.pixel-list li .user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pixel-list li .user-avatar-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 10px;
+  background: var(--pixel-border);
+}
+
+.pixel-list li .username-text {
+  flex: 1;
+}
+
+.pixel-list li .user-role {
+  font-size: 6px;
+  padding: 2px 4px;
+  border-radius: 2px;
+}
+
+.pixel-list li .user-role.owner {
+  background: var(--pixel-accent);
+  color: white;
+}
+
+.pixel-list li .user-role.mod {
+  background: var(--pixel-success);
+  color: white;
+}
+
+.pixel-list li .user-role.banned {
+  background: #ff4757;
+  color: white;
 }
 
 .pixel-list li.you {
@@ -800,4 +930,144 @@ input[type="range"] {
 
 #user-count {
   color: var(--pixel-success);
+}
+
+/* ===== MODAL STYLES ===== */
+.modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+  backdrop-filter: blur(5px);
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-content {
+  background: var(--pixel-panel);
+  border: 3px solid var(--pixel-accent);
+  border-radius: 12px;
+  padding: calc(var(--pixel-size) * 5);
+  max-width: 500px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  animation: modalPop 0.3s ease;
+  position: relative;
+}
+
+@keyframes modalPop {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: calc(var(--pixel-size) * 4);
+  border-bottom: 2px solid var(--pixel-border);
+  padding-bottom: calc(var(--pixel-size) * 2);
+}
+
+.profile-content {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--pixel-size) * 3);
+}
+
+.profile-avatar {
+  width: 100px;
+  height: 100px;
+  margin: 0 auto;
+  border: 3px solid var(--pixel-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--pixel-bg);
+}
+
+.profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+
+.profile-avatar .avatar-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48px;
+  background: var(--pixel-border);
+}
+
+.profile-stats {
+  background: rgba(15, 52, 96, 0.4);
+  border: 2px solid var(--pixel-border);
+  padding: calc(var(--pixel-size) * 3);
+  border-radius: 8px;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: calc(var(--pixel-size) * 1.5) 0;
+  border-bottom: 1px solid var(--pixel-border);
+  font-size: 9px;
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-label {
+  color: var(--pixel-dim);
+}
+
+.stat-value {
+  color: var(--pixel-success);
+  font-weight: bold;
+}
+
+.owner-controls, .mod-controls {
+  background: rgba(233, 69, 96, 0.2);
+  border: 2px solid var(--pixel-accent);
+  padding: calc(var(--pixel-size) * 2);
+  border-radius: 8px;
+}
+
+.owner-controls.hidden, .mod-controls.hidden {
+  display: none;
+}
+
+.banned-badge {
+  background: #ff4757;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 8px;
+  display: inline-block;
+  margin-top: calc(var(--pixel-size) * 2);
+}
+
+/* Room controls button in header */
+.room-controls-btn {
+  background: var(--pixel-accent);
+  border: 2px solid var(--pixel-border);
+  color: var(--pixel-btn-text);
+  padding: calc(var(--pixel-size) * 1.5) calc(var(--pixel-size) * 3);
+  font-size: 8px;
+  cursor: pointer;
+  font-family: var(--pixel-font);
+}
+
+.room-controls-btn:hover {
+  background: #ff6b85;
 }

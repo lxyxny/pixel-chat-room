@@ -21,10 +21,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Data structures
 const rooms = new Map();
 const threads = new Map();
 const privateMessages = new Map();
 const users = new Map();
+const roomOwners = new Map(); // roomName -> owner socketId
+const roomModerators = new Map(); // roomName -> Set of usernames
+const bannedUsers = new Map(); // roomName -> Set of usernames
 
 function isValidImage(dataUrl) {
   if (!dataUrl || typeof dataUrl !== 'string') return false;
@@ -34,22 +38,63 @@ function isValidImage(dataUrl) {
   );
 }
 
+function getUserRole(socketId, roomName) {
+  const user = users.get(socketId);
+  if (!user) return 'member';
+  
+  if (roomOwners.get(roomName) === socketId) return 'owner';
+  if (roomModerators.has(roomName) && roomModerators.get(roomName).has(user.username)) return 'mod';
+  if (bannedUsers.has(roomName) && bannedUsers.get(roomName).has(user.username)) return 'banned';
+  
+  return 'member';
+}
+
 io.on('connection', (socket) => {
   console.log(`🔌 Player connected: ${socket.id}`);
   
-  users.set(socket.id, { socketId: socket.id });
+  users.set(socket.id, { 
+    socketId: socket.id, 
+    username: null, 
+    avatar: null,
+    roomsJoined: 0,
+    messagesSent: 0,
+    status: 'online'
+  });
 
-  socket.on('joinRoom', ({ roomName, username, isHost }) => {
+  socket.on('joinRoom', ({ roomName, username, isHost, avatar }) => {
+    // Check if banned
+    if (bannedUsers.has(roomName) && bannedUsers.get(roomName).has(username)) {
+      socket.emit('error', '🚫 You are banned from this room');
+      return;
+    }
+    
     socket.join(roomName);
     
     const userInfo = {
       id: socket.id,
       username,
+      avatar: avatar || null,
       isHost: isHost || false,
+      role: isHost ? 'owner' : 'member',
       room: roomName,
-      status: 'online'
+      status: 'online',
+      roomsJoined: (users.get(socket.id)?.roomsJoined || 0) + 1,
+      messagesSent: users.get(socket.id)?.messagesSent || 0,
+      isBanned: false
     };
+    
     users.set(socket.id, userInfo);
+    
+    // Set room owner
+    if (isHost) {
+      roomOwners.set(roomName, socket.id);
+      if (!roomModerators.has(roomName)) {
+        roomModerators.set(roomName, new Set());
+      }
+      if (!bannedUsers.has(roomName)) {
+        bannedUsers.set(roomName, new Set());
+      }
+    }
     
     if (!rooms.has(roomName)) {
       rooms.set(roomName, new Set());
@@ -65,7 +110,12 @@ io.on('connection', (socket) => {
       username: u.username,
       isHost: u.isHost,
       id: u.id,
-      status: u.status
+      status: u.status,
+      role: getUserRole(u.id, roomName),
+      avatar: u.avatar,
+      roomsJoined: u.roomsJoined,
+      messagesSent: u.messagesSent,
+      isBanned: false
     }));
     
     io.to(roomName).emit('updateUsers', roomUsers);
@@ -75,18 +125,31 @@ io.on('connection', (socket) => {
       roomName, 
       users: roomUsers, 
       socketId: socket.id,
-      isHost: isHost || false
+      isHost: isHost || false,
+      role: getUserRole(socket.id, roomName)
     });
     
     console.log(`🚪 ${username} joined room: ${roomName}`);
   });
 
-  socket.on('chatMessage', ({ roomName, username, message, image, replyTo }) => {
+  socket.on('chatMessage', ({ roomName, username, message, image, replyTo, avatar }) => {
     if (!message?.trim() && !image) return;
     
     if (image && !isValidImage(image)) {
       socket.emit('error', '⚠️ Invalid image format');
       return;
+    }
+    
+    // Update user avatar
+    if (avatar && users.has(socket.id)) {
+      users.get(socket.id).avatar = avatar;
+      socket.to(roomName).emit('avatarUpdated', { userId: socket.id, avatar });
+    }
+    
+    // Update message count
+    const user = users.get(socket.id);
+    if (user) {
+      user.messagesSent = (user.messagesSent || 0) + 1;
     }
 
     const messageData = {
@@ -97,13 +160,170 @@ io.on('connection', (socket) => {
       replyTo: replyTo || null,
       reactions: {},
       timestamp: new Date().toLocaleTimeString(),
-      senderId: socket.id
+      senderId: socket.id,
+      avatar: avatar || null
     };
 
     socket.to(roomName).emit('chatMessage', messageData);
     console.log(`💬 [${roomName}] ${username}: ${message?.substring(0, 50) || ''}`);
   });
 
+  socket.on('updateAvatar', ({ avatar }) => {
+    if (avatar && isValidImage(avatar)) {
+      const user = users.get(socket.id);
+      if (user) {
+        user.avatar = avatar;
+        // Notify all rooms
+        for (const [roomName, roomUsers] of rooms) {
+          if (Array.from(roomUsers).some(u => u.id === socket.id)) {
+            socket.to(roomName).emit('avatarUpdated', { userId: socket.id, avatar });
+          }
+        }
+      }
+    }
+  });
+
+  // Admin Controls
+  socket.on('setModerator', ({ roomName, targetUser }) => {
+    const role = getUserRole(socket.id, roomName);
+    if (role !== 'owner') {
+      socket.emit('error', '⚠️ Only owners can set moderators');
+      return;
+    }
+    
+    if (!roomModerators.has(roomName)) {
+      roomModerators.set(roomName, new Set());
+    }
+    roomModerators.get(roomName).add(targetUser);
+    
+    io.to(roomName).emit('moderatorSet', { username: targetUser });
+    io.to(roomName).emit('updateUsers', 
+      Array.from(rooms.get(roomName)).map(u => ({
+        username: u.username,
+        isHost: u.isHost,
+        id: u.id,
+        role: getUserRole(u.id, roomName),
+        avatar: u.avatar
+      }))
+    );
+  });
+
+  socket.on('kickUser', ({ roomName, targetUser }) => {
+    const role = getUserRole(socket.id, roomName);
+    if (role !== 'owner' && role !== 'mod') {
+      socket.emit('error', '⚠️ Only owners and mods can kick users');
+      return;
+    }
+    
+    // Find and kick the user
+    for (const [sockId, user] of users) {
+      if (user.username === targetUser && user.room === roomName) {
+        io.to(sockId).emit('userKicked');
+        io.to(roomName).emit('systemMessage', { text: `👢 ${targetUser} has been kicked` });
+        
+        const room = rooms.get(roomName);
+        if (room) {
+          room.delete(user);
+        }
+        socket.to(roomName).emit('updateUsers', 
+          Array.from(room || []).map(u => ({
+            username: u.username,
+            isHost: u.isHost,
+            id: u.id,
+            role: getUserRole(u.id, roomName)
+          }))
+        );
+        break;
+      }
+    }
+  });
+
+  socket.on('banUser', ({ roomName, targetUser }) => {
+    const role = getUserRole(socket.id, roomName);
+    if (role !== 'owner') {
+      socket.emit('error', '⚠️ Only owners can ban users');
+      return;
+    }
+    
+    if (!bannedUsers.has(roomName)) {
+      bannedUsers.set(roomName, new Set());
+    }
+    bannedUsers.get(roomName).add(targetUser);
+    
+    // Kick the user
+    for (const [sockId, user] of users) {
+      if (user.username === targetUser && user.room === roomName) {
+        io.to(sockId).emit('userBanned');
+        
+        const room = rooms.get(roomName);
+        if (room) {
+          room.delete(user);
+        }
+        break;
+      }
+    }
+    
+    io.to(roomName).emit('systemMessage', { text: `🚫 ${targetUser} has been banned` });
+    io.to(roomName).emit('updateUsers', 
+      Array.from(rooms.get(roomName) || []).map(u => ({
+        username: u.username,
+        isHost: u.isHost,
+        id: u.id,
+        role: getUserRole(u.id, roomName),
+        isBanned: bannedUsers.get(roomName)?.has(u.username) || false
+      }))
+    );
+  });
+
+  socket.on('unbanUser', ({ roomName, targetUser }) => {
+    const role = getUserRole(socket.id, roomName);
+    if (role !== 'owner') {
+      socket.emit('error', '⚠️ Only owners can unban users');
+      return;
+    }
+    
+    if (bannedUsers.has(roomName)) {
+      bannedUsers.get(roomName).delete(targetUser);
+    }
+    
+    io.to(roomName).emit('systemMessage', { text: `✅ ${targetUser} has been unbanned` });
+  });
+
+  socket.on('deleteRoom', ({ roomName }) => {
+    const role = getUserRole(socket.id, roomName);
+    if (role !== 'owner') {
+      socket.emit('error', '⚠️ Only owners can delete rooms');
+      return;
+    }
+    
+    io.to(roomName).emit('roomDeleted');
+    io.to(roomName).disconnectSockets(true);
+    
+    rooms.delete(roomName);
+    roomOwners.delete(roomName);
+    roomModerators.delete(roomName);
+    bannedUsers.delete(roomName);
+    threads.forEach((thread, id) => {
+      if (thread.room === roomName) {
+        threads.delete(id);
+      }
+    });
+    
+    console.log(`🗑️ Room deleted: ${roomName}`);
+  });
+
+  socket.on('getBannedUsers', ({ roomName }) => {
+    const role = getUserRole(socket.id, roomName);
+    if (role !== 'owner') {
+      socket.emit('error', '⚠️ Only owners can view banned users');
+      return;
+    }
+    
+    const banned = bannedUsers.has(roomName) ? Array.from(bannedUsers.get(roomName)) : [];
+    socket.emit('bannedUsersList', { bannedUsers: banned });
+  });
+
+  // Thread events
   socket.on('createThread', ({ roomName, parentMessageId, threadName, username }) => {
     const threadId = uuidv4();
     const thread = {
@@ -125,11 +345,9 @@ io.on('connection', (socket) => {
       parentMessageId,
       createdBy: username
     });
-    
-    console.log(`🧵 Thread created: ${thread.name}`);
   });
 
-  socket.on('threadMessage', ({ threadId, username, message, image }) => {
+  socket.on('threadMessage', ({ threadId, username, message }) => {
     const thread = threads.get(threadId);
     if (!thread) return;
     
@@ -137,7 +355,6 @@ io.on('connection', (socket) => {
       id: uuidv4(),
       username,
       message: message?.trim() || '',
-      image: image || null,
       timestamp: new Date().toLocaleTimeString(),
       senderId: socket.id,
       threadId: threadId
@@ -145,7 +362,6 @@ io.on('connection', (socket) => {
     
     thread.messages.push(messageData);
     io.to(`thread-${threadId}`).emit('threadMessage', messageData);
-    console.log(`🧵 Thread message in ${threadId}`);
   });
 
   socket.on('joinThread', ({ threadId }) => {
@@ -157,24 +373,16 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('leaveThread', ({ threadId }) => {
-    const thread = threads.get(threadId);
-    if (thread) {
-      thread.participants.delete(socket.id);
-      socket.leave(`thread-${threadId}`);
-    }
-  });
-
-  socket.on('privateMessage', ({ toUserId, fromUsername, message, image }) => {
+  // Private messages
+  socket.on('privateMessage', ({ toUserId, fromUsername, message, messageId }) => {
     const dmId = [socket.id, toUserId].sort().join('-');
     
     const messageData = {
-      id: uuidv4(),
+      id: messageId || uuidv4(),
       from: socket.id,
       fromUsername,
       to: toUserId,
       message: message?.trim() || '',
-      image: image || null,
       timestamp: new Date().toLocaleTimeString()
     };
     
@@ -185,8 +393,6 @@ io.on('connection', (socket) => {
     
     io.to(toUserId).emit('privateMessage', messageData);
     socket.emit('privateMessage', messageData);
-    
-    console.log(`📩 DM from ${fromUsername} to ${toUserId}`);
   });
 
   socket.on('getDMHistory', ({ userId }) => {
@@ -195,11 +401,12 @@ io.on('connection', (socket) => {
     socket.emit('dmHistory', { userId, messages: history });
   });
 
+  // Soundboard
   socket.on('playSound', ({ roomName, soundId, username }) => {
     socket.to(roomName).emit('playSound', { soundId, username });
-    console.log(`🔊 ${username} played sound ${soundId}`);
   });
 
+  // Reactions
   socket.on('addReaction', ({ roomName, messageId, emoji, username }) => {
     io.to(roomName).emit('reactionAdded', {
       messageId,
@@ -218,10 +425,12 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Typing
   socket.on('typing', ({ roomName, username, isTyping }) => {
     socket.to(roomName).emit('userTyping', { username, isTyping });
   });
 
+  // Disconnect
   socket.on('disconnect', () => {
     console.log(`🔌 Player disconnected: ${socket.id}`);
     
@@ -238,10 +447,16 @@ io.on('connection', (socket) => {
             username: u.username,
             isHost: u.isHost,
             id: u.id,
-            status: u.status
+            status: u.status,
+            role: getUserRole(u.id, roomName)
           }))
         );
-        if (roomUsers.size === 0) rooms.delete(roomName);
+        if (roomUsers.size === 0) {
+          rooms.delete(roomName);
+          roomOwners.delete(roomName);
+          roomModerators.delete(roomName);
+          bannedUsers.delete(roomName);
+        }
       }
     }
     
@@ -254,5 +469,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`🎮 Pixel Chat running on http://localhost:${PORT}`);
   console.log(`🧵 Threads enabled`);
   console.log(`📩 Private messages enabled`);
-  console.log(`🔊 Soundboard enabled`);
+  console.log(`🎵 Soundboard enabled`);
+  console.log(`👤 Profiles enabled`);
+  console.log(`🛡️ Admin controls enabled`);
 });

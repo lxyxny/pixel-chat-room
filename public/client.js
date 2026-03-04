@@ -35,6 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const uiOpacitySlider = document.getElementById('ui-opacity-slider');
   const buttonOpacitySlider = document.getElementById('button-opacity-slider');
   const textOpacitySlider = document.getElementById('text-opacity-slider');
+  const showAvatarsToggle = document.getElementById('show-avatars-toggle');
   const uiOpacityValue = document.getElementById('ui-opacity-value');
   const buttonOpacityValue = document.getElementById('button-opacity-value');
   const textOpacityValue = document.getElementById('text-opacity-value');
@@ -85,13 +86,39 @@ document.addEventListener('DOMContentLoaded', () => {
   const sendDmBtn = document.getElementById('send-dm-btn');
   const closeDmBtn = document.getElementById('close-dm-btn');
 
+  // Profile Modal
+  const profileModal = document.getElementById('profile-modal');
+  const profileUsernameEl = document.getElementById('profile-username');
+  const profileAvatarImg = document.getElementById('profile-avatar-img');
+  const avatarPlaceholder = document.getElementById('avatar-placeholder');
+  const profileRoleEl = document.getElementById('profile-role');
+  const profileStatusEl = document.getElementById('profile-status');
+  const profileRoomsEl = document.getElementById('profile-rooms');
+  const profileMessagesEl = document.getElementById('profile-messages');
+  const closeProfileBtn = document.getElementById('close-profile-btn');
+  const ownerControls = document.getElementById('owner-controls');
+  const modControls = document.getElementById('mod-controls');
+  const setModBtn = document.getElementById('set-mod-btn');
+  const kickBtn = document.getElementById('kick-btn');
+  const banBtn = document.getElementById('ban-btn');
+  const unbanBtn = document.getElementById('unban-btn');
+  const modKickBtn = document.getElementById('mod-kick-btn');
+
+  // Room Controls Modal
+  const roomControlsModal = document.getElementById('room-controls-modal');
+  const closeRoomControlsBtn = document.getElementById('close-room-controls-btn');
+  const deleteRoomBtn = document.getElementById('delete-room-btn');
+  const viewBannedBtn = document.getElementById('view-banned-btn');
+
   // ===== STATE =====
   let currentRoom = null;
   let myUsername = null;
   let mySocketId = null;
   let isHost = false;
+  let myRole = 'member';
   let pendingReply = null;
   let pendingImage = null;
+  let pendingAvatar = null;
   let isTyping = false;
   let typingTimer = null;
   let selectedMessageId = null;
@@ -99,7 +126,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const threads = new Map();
   let currentThread = null;
   let currentDM = null;
-  const sentDMMessages = new Set(); // ✅ FIX: Track sent DM messages to prevent duplicates
+  const sentDMMessages = new Set();
+  const users = new Map();
+  let selectedUser = null;
+  let myAvatar = null;
 
   // ===== AUDIO =====
   window.audioContext = null;
@@ -119,9 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       window.audioContext = new (window.AudioContext || window.webkitAudioContext)();
       window.audioEnabled = true;
-      console.log('🔊 Audio initialized');
     } catch(e) {
-      console.warn('⚠️ Audio not supported:', e);
       window.audioEnabled = false;
     }
   }
@@ -138,7 +166,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const now = ctx.currentTime;
     
     const sound = soundEffects[type] || { freq: [523.25], type: 'square', duration: 0.15 };
-    
     osc.type = sound.type;
     sound.freq.forEach((freq, i) => {
       osc.frequency.setValueAtTime(freq, now + (i * 0.1));
@@ -211,9 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
       particle.style.setProperty('--ty', `${Math.sin(angle) * distance - 20}px`);
       particle.style.left = `${x}px`;
       particle.style.top = `${y}px`;
-      if (color) {
-        particle.style.background = color;
-      }
+      if (color) particle.style.background = color;
       document.body.appendChild(particle);
       setTimeout(() => particle.remove(), 600);
     }
@@ -235,6 +260,68 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if (panel) panel.classList.add('active');
     if (tab) tab.classList.add('active');
+  }
+
+  function openProfileModal(user) {
+    if (!profileModal) return;
+    
+    selectedUser = user;
+    profileUsernameEl.textContent = user.username;
+    profileRoleEl.textContent = user.role || 'Member';
+    profileStatusEl.textContent = user.status || 'Online';
+    profileRoomsEl.textContent = user.roomsJoined || 1;
+    profileMessagesEl.textContent = user.messagesSent || 0;
+    
+    // Avatar
+    if (user.avatar) {
+      profileAvatarImg.src = user.avatar;
+      profileAvatarImg.style.display = 'block';
+      avatarPlaceholder.style.display = 'none';
+    } else {
+      profileAvatarImg.style.display = 'none';
+      avatarPlaceholder.style.display = 'flex';
+    }
+    
+    // Show banned status
+    if (user.isBanned) {
+      profileStatusEl.textContent = 'Banned';
+      profileStatusEl.style.color = '#ff4757';
+    }
+    
+    // Show controls based on role
+    ownerControls.classList.add('hidden');
+    modControls.classList.add('hidden');
+    unbanBtn.classList.add('hidden');
+    
+    if (myRole === 'owner' && user.username !== myUsername) {
+      ownerControls.classList.remove('hidden');
+      if (user.isBanned) {
+        unbanBtn.classList.remove('hidden');
+        banBtn.classList.add('hidden');
+      } else {
+        unbanBtn.classList.add('hidden');
+        banBtn.classList.remove('hidden');
+      }
+    } else if (myRole === 'mod' && user.username !== myUsername && user.role !== 'owner') {
+      modControls.classList.remove('hidden');
+    }
+    
+    profileModal.classList.remove('hidden');
+  }
+
+  function closeProfileModal() {
+    if (profileModal) profileModal.classList.add('hidden');
+    selectedUser = null;
+  }
+
+  function openRoomControlsModal() {
+    if (roomControlsModal && myRole === 'owner') {
+      roomControlsModal.classList.remove('hidden');
+    }
+  }
+
+  function closeRoomControlsModal() {
+    if (roomControlsModal) roomControlsModal.classList.add('hidden');
   }
 
   // ===== START MENU =====
@@ -294,7 +381,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function attemptEnterRoom() {
     initAudio();
-    
     const username = usernameInput?.value.trim().toUpperCase() || 'GUEST' + Math.floor(Math.random()*999);
     const room = roomInput?.value.trim().toUpperCase() || 'LOBBY';
     
@@ -305,7 +391,7 @@ document.addEventListener('DOMContentLoaded', () => {
     currentRoom = room;
     isHost = roomTitle.textContent.includes('HOST');
     
-    socket.emit('joinRoom', { roomName: room, username, isHost });
+    socket.emit('joinRoom', { roomName: room, username, isHost, avatar: myAvatar });
     playSystemSound('join');
     showServerURL();
   }
@@ -324,6 +410,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (uiOpacitySlider) uiOpacitySlider.value = colors.uiOpacity || '1';
       if (buttonOpacitySlider) buttonOpacitySlider.value = colors.buttonOpacity || '1';
       if (textOpacitySlider) textOpacitySlider.value = colors.textOpacity || '1';
+      if (showAvatarsToggle) showAvatarsToggle.checked = colors.showAvatars !== false;
     }
     updateColorPreviews();
     updateOpacityValues();
@@ -341,15 +428,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateOpacityValues() {
-    if (uiOpacitySlider && uiOpacityValue) {
-      uiOpacityValue.textContent = Math.round(uiOpacitySlider.value * 100) + '%';
-    }
-    if (buttonOpacitySlider && buttonOpacityValue) {
-      buttonOpacityValue.textContent = Math.round(buttonOpacitySlider.value * 100) + '%';
-    }
-    if (textOpacitySlider && textOpacityValue) {
-      textOpacityValue.textContent = Math.round(textOpacitySlider.value * 100) + '%';
-    }
+    if (uiOpacitySlider && uiOpacityValue) uiOpacityValue.textContent = Math.round(uiOpacitySlider.value * 100) + '%';
+    if (buttonOpacitySlider && buttonOpacityValue) buttonOpacityValue.textContent = Math.round(buttonOpacitySlider.value * 100) + '%';
+    if (textOpacitySlider && textOpacityValue) textOpacityValue.textContent = Math.round(textOpacitySlider.value * 100) + '%';
   }
 
   if (nameColorPicker) {
@@ -388,9 +469,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (bgImageUrl) {
-    bgImageUrl.addEventListener('input', () => {
-      updateColorPreviews();
-    });
+    bgImageUrl.addEventListener('input', () => updateColorPreviews());
   }
 
   if (bgImageUpload) {
@@ -435,6 +514,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  if (showAvatarsToggle) {
+    showAvatarsToggle.addEventListener('change', () => {
+      const show = showAvatarsToggle.checked;
+      document.documentElement.style.setProperty('--show-avatars', show ? 'block' : 'none');
+    });
+  }
+
   if (saveColorsBtn) {
     saveColorsBtn.addEventListener('click', () => {
       const colors = {
@@ -446,11 +532,11 @@ document.addEventListener('DOMContentLoaded', () => {
         bgImage: bgImageUrl?.value || '',
         uiOpacity: uiOpacitySlider?.value || '1',
         buttonOpacity: buttonOpacitySlider?.value || '1',
-        textOpacity: textOpacitySlider?.value || '1'
+        textOpacity: textOpacitySlider?.value || '1',
+        showAvatars: showAvatarsToggle?.checked !== false
       };
       localStorage.setItem('pixelChatColors', JSON.stringify(colors));
       
-      // Apply background image immediately
       if (colors.bgImage) {
         document.body.style.backgroundImage = `url(${colors.bgImage})`;
         document.body.style.backgroundSize = 'cover';
@@ -460,10 +546,10 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.style.backgroundImage = '';
       }
       
-      // Apply opacity
       document.documentElement.style.setProperty('--ui-opacity', colors.uiOpacity);
       document.documentElement.style.setProperty('--button-opacity', colors.buttonOpacity);
       document.documentElement.style.setProperty('--text-opacity', colors.textOpacity);
+      document.documentElement.style.setProperty('--show-avatars', colors.showAvatars ? 'block' : 'none');
       
       addSystemMessage('💾 Colors saved!');
       playSystemSound('send');
@@ -481,6 +567,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (uiOpacitySlider) uiOpacitySlider.value = '1';
       if (buttonOpacitySlider) buttonOpacitySlider.value = '1';
       if (textOpacitySlider) textOpacitySlider.value = '1';
+      if (showAvatarsToggle) showAvatarsToggle.checked = true;
       updateColorPreviews();
       updateOpacityValues();
       
@@ -492,6 +579,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.documentElement.style.setProperty('--ui-opacity', '1');
       document.documentElement.style.setProperty('--button-opacity', '1');
       document.documentElement.style.setProperty('--text-opacity', '1');
+      document.documentElement.style.setProperty('--show-avatars', 'block');
       document.body.style.backgroundImage = '';
       
       localStorage.removeItem('pixelChatColors');
@@ -511,13 +599,13 @@ document.addEventListener('DOMContentLoaded', () => {
       showPanel(`${tabName}-panel`);
       
       if (tabName !== 'threads') {
-        threadView.classList.add('hidden');
-        threadsList.classList.remove('hidden');
+        if (threadView) threadView.classList.add('hidden');
+        if (threadsList) threadsList.classList.remove('hidden');
         currentThread = null;
       }
       if (tabName !== 'dms') {
-        dmChat.classList.add('hidden');
-        dmUsersList.classList.remove('hidden');
+        if (dmChat) dmChat.classList.add('hidden');
+        if (dmUsersList) dmUsersList.classList.remove('hidden');
         currentDM = null;
       }
     });
@@ -586,7 +674,8 @@ document.addEventListener('DOMContentLoaded', () => {
       username: myUsername,
       message,
       image,
-      replyTo: pendingReply
+      replyTo: pendingReply,
+      avatar: myAvatar
     });
     
     addMessage({
@@ -598,7 +687,8 @@ document.addEventListener('DOMContentLoaded', () => {
       id: Date.now() + '-local',
       timestamp: new Date().toLocaleTimeString(),
       senderId: socket.id,
-      reactions: {}
+      reactions: {},
+      avatar: myAvatar
     }, true);
     
     messageInput.value = '';
@@ -671,6 +761,31 @@ document.addEventListener('DOMContentLoaded', () => {
     if (messageInput) messageInput.placeholder = 'TYPE MESSAGE...';
   }
 
+  // ===== AVATAR UPLOAD =====
+  function uploadAvatar() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = (e) => {
+      const file = e.target.files[0];
+      if (file && file.type.startsWith('image/')) {
+        if (file.size > 5 * 1024 * 1024) {
+          addSystemMessage('⚠️ Avatar too large (max 5MB)');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          myAvatar = event.target.result;
+          socket.emit('updateAvatar', { avatar: myAvatar });
+          addSystemMessage('✅ Avatar updated!');
+          updateUserList(Array.from(users.values()));
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+    input.click();
+  }
+
   // ===== REPLY =====
   if (messagesEl) {
     messagesEl.addEventListener('dblclick', (e) => {
@@ -726,6 +841,78 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // ===== PROFILE MODAL =====
+  if (closeProfileBtn) {
+    closeProfileBtn.addEventListener('click', closeProfileModal);
+  }
+
+  if (setModBtn) {
+    setModBtn.addEventListener('click', () => {
+      if (selectedUser && currentRoom) {
+        socket.emit('setModerator', { roomName: currentRoom, targetUser: selectedUser.username });
+        closeProfileModal();
+      }
+    });
+  }
+
+  if (kickBtn) {
+    kickBtn.addEventListener('click', () => {
+      if (selectedUser && currentRoom) {
+        socket.emit('kickUser', { roomName: currentRoom, targetUser: selectedUser.username });
+        closeProfileModal();
+      }
+    });
+  }
+
+  if (banBtn) {
+    banBtn.addEventListener('click', () => {
+      if (selectedUser && currentRoom) {
+        socket.emit('banUser', { roomName: currentRoom, targetUser: selectedUser.username });
+        closeProfileModal();
+      }
+    });
+  }
+
+  if (unbanBtn) {
+    unbanBtn.addEventListener('click', () => {
+      if (selectedUser && currentRoom) {
+        socket.emit('unbanUser', { roomName: currentRoom, targetUser: selectedUser.username });
+        closeProfileModal();
+      }
+    });
+  }
+
+  if (modKickBtn) {
+    modKickBtn.addEventListener('click', () => {
+      if (selectedUser && currentRoom) {
+        socket.emit('kickUser', { roomName: currentRoom, targetUser: selectedUser.username });
+        closeProfileModal();
+      }
+    });
+  }
+
+  // ===== ROOM CONTROLS =====
+  if (deleteRoomBtn) {
+    deleteRoomBtn.addEventListener('click', () => {
+      if (currentRoom && myRole === 'owner') {
+        if (confirm('Are you sure you want to delete this room? This cannot be undone!')) {
+          socket.emit('deleteRoom', { roomName: currentRoom });
+          closeRoomControlsModal();
+        }
+      }
+    });
+  }
+
+  if (viewBannedBtn) {
+    viewBannedBtn.addEventListener('click', () => {
+      socket.emit('getBannedUsers', { roomName: currentRoom });
+    });
+  }
+
+  if (closeRoomControlsBtn) {
+    closeRoomControlsBtn.addEventListener('click', closeRoomControlsModal);
+  }
+
   // ===== THREADS =====
   if (closeThreadBtn) {
     closeThreadBtn.addEventListener('click', () => {
@@ -751,7 +938,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const message = threadMessageInput.value.trim();
     if (!message) return;
     
-    console.log('🧵 Sending thread message:', { threadId: currentThread.id, message });
     socket.emit('threadMessage', {
       threadId: currentThread.id,
       username: myUsername,
@@ -786,7 +972,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const message = dmMessageInput.value.trim();
     if (!message) return;
     
-    // ✅ FIX: Create unique message ID to track
     const messageId = Date.now() + '-dm-' + Math.random().toString(36).substr(2, 9);
     sentDMMessages.add(messageId);
     
@@ -794,10 +979,9 @@ document.addEventListener('DOMContentLoaded', () => {
       toUserId: currentDM.userId,
       fromUsername: myUsername,
       message,
-      messageId // ✅ Track message ID
+      messageId
     });
     
-    // ✅ Add locally immediately
     addDMMessage({
       from: mySocketId,
       fromUsername: myUsername,
@@ -819,14 +1003,27 @@ document.addEventListener('DOMContentLoaded', () => {
     addSystemMessage('⚠️ Connection error. Refresh page.');
   });
 
-  socket.on('joinedRoom', ({ roomName, users, socketId, isHost: hostStatus }) => {
+  socket.on('joinedRoom', ({ roomName, users, socketId, isHost: hostStatus, role }) => {
     console.log('✅ Joined room:', roomName);
     mySocketId = socketId;
     isHost = hostStatus;
+    myRole = role || (isHost ? 'owner' : 'member');
+    
     if (roomDisplay) roomDisplay.textContent = roomName;
-    updateUserList(users);
+    
+    // Store user info
+    users.clear();
+    users.forEach((u, k) => users.delete(k));
+    users.forEach((u, k) => users.delete(k));
+    if (Array.isArray(users)) {
+      users.forEach(u => {
+        users.set(u.id, u);
+      });
+    }
+    
+    updateUserList(Array.from(users.values()));
     showScreen(chatScreen);
-    addSystemMessage(`🎮 Connected to ${roomName}${isHost ? ' (HOST)' : ''}`);
+    addSystemMessage(`🎮 Connected to ${roomName}${myRole === 'owner' ? ' (OWNER)' : myRole === 'mod' ? ' (MOD)' : ''}`);
     if (messageInput) messageInput.focus();
     playSystemSound('join');
     showServerURL();
@@ -834,6 +1031,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socket.on('chatMessage', (data) => {
     console.log('📥 Received message:', data.username);
+    if (data.avatar) {
+      if (!users.has(data.senderId)) {
+        users.set(data.senderId, { id: data.senderId, username: data.username, avatar: data.avatar });
+      } else {
+        users.get(data.senderId).avatar = data.avatar;
+      }
+    }
     addMessage(data, false);
     scrollToBottom();
     playSystemSound('receive');
@@ -844,9 +1048,13 @@ document.addEventListener('DOMContentLoaded', () => {
     scrollToBottom();
   });
 
-  socket.on('updateUsers', (users) => {
-    updateUserList(users);
-    updateDMUsersList(users);
+  socket.on('updateUsers', (usersList) => {
+    users.clear();
+    usersList.forEach(u => {
+      users.set(u.id, u);
+    });
+    updateUserList(usersList);
+    updateDMUsersList(usersList);
   });
 
   socket.on('userTyping', ({ username, isTyping }) => {
@@ -866,35 +1074,56 @@ document.addEventListener('DOMContentLoaded', () => {
     playSystemSound('error');
   });
 
+  socket.on('userKicked', () => {
+    addSystemMessage('👢 You have been kicked from the room');
+    showScreen(startScreen);
+    currentRoom = null;
+  });
+
+  socket.on('userBanned', () => {
+    addSystemMessage('🚫 You have been banned from the room');
+    showScreen(startScreen);
+    currentRoom = null;
+  });
+
+  socket.on('roomDeleted', () => {
+    addSystemMessage('🗑️ Room has been deleted by owner');
+    showScreen(startScreen);
+    currentRoom = null;
+  });
+
+  socket.on('bannedUsersList', ({ bannedUsers }) => {
+    addSystemMessage(`🚫 Banned users: ${bannedUsers.join(', ') || 'None'}`);
+  });
+
+  socket.on('moderatorSet', ({ username }) => {
+    addSystemMessage(`⭐ ${username} is now a moderator!`);
+  });
+
   // Thread events
   socket.on('threadCreated', ({ threadId, threadName, createdBy }) => {
     threads.set(threadId, { id: threadId, name: threadName, messages: [] });
     addSystemMessage(`🧵 ${createdBy} created thread: ${threadName}`);
     updateThreadsList();
-    // ✅ Show threads tab now
     if (threadsTab) threadsTab.classList.remove('hidden');
   });
 
   socket.on('threadMessage', (data) => {
-    console.log('🧵 Received thread message:', data);
     if (currentThread && currentThread.id === data.threadId) {
       addThreadMessage(data);
     }
   });
 
   socket.on('threadMessages', ({ threadId, messages }) => {
-    console.log('🧵 Received thread messages:', messages.length);
     if (currentThread && currentThread.id === threadId) {
       threadMessagesEl.innerHTML = '';
       messages.forEach(msg => addThreadMessage(msg));
     }
   });
 
-  // DM events - ✅ FIX: Prevent duplicate messages
+  // DM events
   socket.on('privateMessage', (data) => {
-    // ✅ Check if we already sent this message
     if (data.messageId && sentDMMessages.has(data.messageId)) {
-      console.log('⚠️ Duplicate DM message ignored:', data.messageId);
       return;
     }
     
@@ -913,10 +1142,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Soundboard events
   socket.on('playSound', ({ soundId, username }) => {
     playSound(soundId);
     addSystemMessage(`🔊 ${username} played ${soundId}`);
+  });
+
+  socket.on('avatarUpdated', ({ userId, avatar }) => {
+    if (users.has(userId)) {
+      users.get(userId).avatar = avatar;
+      updateUserList(Array.from(users.values()));
+    }
   });
 
   // ===== HELPERS =====
@@ -944,6 +1179,25 @@ document.addEventListener('DOMContentLoaded', () => {
       msgEl.style.borderColor = 'var(--pixel-accent)';
     }
     
+    // Avatar
+    const user = users.get(data.senderId);
+    const avatar = data.avatar || (user ? user.avatar : null);
+    
+    let avatarHtml = '';
+    if (avatar) {
+      avatarHtml = `
+        <div class="avatar">
+          <img src="${avatar}" alt="avatar" />
+        </div>
+      `;
+    } else {
+      avatarHtml = `
+        <div class="avatar">
+          <div class="avatar-placeholder">👤</div>
+        </div>
+      `;
+    }
+    
     let content = '';
     
     if (data.replyTo) {
@@ -960,10 +1214,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     msgEl.innerHTML = `
-      <span class="meta"><span class="username">${escapeHtml(data.username)}</span><span class="time">[${data.timestamp}]</span></span>
-      ${content}
-      <span class="add-reaction-btn" title="Add Reaction">😊</span>
-      <span class="create-thread-btn" title="Create Thread">🧵</span>
+      ${avatarHtml}
+      <div class="content">
+        <span class="meta"><span class="username" onclick="openProfileFromMessage('${data.username}', '${data.senderId}')">${escapeHtml(data.username)}</span><span class="time">[${data.timestamp}]</span></span>
+        ${content}
+        <span class="add-reaction-btn" title="Add Reaction">😊</span>
+        <span class="create-thread-btn" title="Create Thread">🧵</span>
+      </div>
     `;
     
     const threadBtn = msgEl.querySelector('.create-thread-btn');
@@ -999,6 +1256,11 @@ document.addEventListener('DOMContentLoaded', () => {
     messagesEl.appendChild(msgEl);
   }
 
+  window.openProfileFromMessage = function(username, userId) {
+    const user = users.get(userId) || { username, id: userId };
+    openProfileModal(user);
+  };
+
   function addSystemMessage(text) {
     if (!messagesEl) return;
     const msgEl = document.createElement('div');
@@ -1008,36 +1270,58 @@ document.addEventListener('DOMContentLoaded', () => {
     messagesEl.appendChild(msgEl);
   }
 
-  function updateUserList(users) {
+  function updateUserList(usersList) {
     if (!userListEl) return;
     userListEl.innerHTML = '';
     const seen = new Set();
-    users.forEach(user => {
+    usersList.forEach(user => {
       if (seen.has(user.username)) return;
       seen.add(user.username);
       const li = document.createElement('li');
-      li.textContent = user.username;
-      li.dataset.userId = user.id;
-      if (user.username === myUsername) li.classList.add('you');
-      if (user.isHost) li.classList.add('host');
+      
+      // Avatar
+      let avatarHtml = '';
+      if (user.avatar) {
+        avatarHtml = `
+          <div class="user-avatar">
+            <img src="${user.avatar}" alt="avatar" />
+          </div>
+        `;
+      } else {
+        avatarHtml = `
+          <div class="user-avatar">
+            <div class="user-avatar-placeholder">👤</div>
+          </div>
+        `;
+      }
+      
+      li.innerHTML = `
+        ${avatarHtml}
+        <span class="username-text">${user.username}</span>
+        ${user.role === 'owner' ? '<span class="user-role owner">👑</span>' : ''}
+        ${user.role === 'mod' ? '<span class="user-role mod">🛡️</span>' : ''}
+        ${user.isBanned ? '<span class="user-role banned">🚫</span>' : ''}
+      `;
       
       li.addEventListener('click', () => {
         if (user.id !== mySocketId) {
-          openDM(user.id, user.username);
+          openProfileModal(user);
+        } else {
+          uploadAvatar();
         }
       });
       
       userListEl.appendChild(li);
     });
     
-    if (userCountEl) userCountEl.textContent = users.length;
+    if (userCountEl) userCountEl.textContent = usersList.length;
   }
 
-  function updateDMUsersList(users) {
+  function updateDMUsersList(usersList) {
     if (!dmUsersList) return;
     dmUsersList.innerHTML = '';
     
-    users.forEach(user => {
+    usersList.forEach(user => {
       if (user.id === mySocketId) return;
       
       const item = document.createElement('div');
@@ -1053,14 +1337,13 @@ document.addEventListener('DOMContentLoaded', () => {
     dmUsernameEl.textContent = username;
     dmChat.classList.remove('hidden');
     dmUsersList.classList.add('hidden');
-    sentDMMessages.clear(); // ✅ Clear sent messages when switching DM
+    sentDMMessages.clear();
     socket.emit('getDMHistory', { userId });
   }
 
   function addDMMessage(data) {
     if (!dmMessagesEl) return;
     
-    // ✅ Check for duplicates
     if (data.id && sentDMMessages.has(data.id)) {
       return;
     }
@@ -1166,6 +1449,8 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('🧵 Threads: Enabled (hidden until created)');
   console.log('📩 DMs: Enabled');
   console.log('🎵 Soundboard: Enabled');
+  console.log('👤 Profiles: Enabled');
+  console.log('🛡️ Admin Controls: Enabled');
   showServerURL();
   
   if (usernameInput) usernameInput.focus();
