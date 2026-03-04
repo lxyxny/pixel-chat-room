@@ -21,14 +21,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Data structures
 const rooms = new Map();
 const threads = new Map();
 const privateMessages = new Map();
 const users = new Map();
-const roomOwners = new Map(); // roomName -> owner socketId
-const roomModerators = new Map(); // roomName -> Set of usernames
-const bannedUsers = new Map(); // roomName -> Set of usernames
+const roomOwners = new Map();
+const roomModerators = new Map();
+const bannedUsers = new Map();
 
 function isValidImage(dataUrl) {
   if (!dataUrl || typeof dataUrl !== 'string') return false;
@@ -62,7 +61,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('joinRoom', ({ roomName, username, isHost, avatar }) => {
-    // Check if banned
     if (bannedUsers.has(roomName) && bannedUsers.get(roomName).has(username)) {
       socket.emit('error', '🚫 You are banned from this room');
       return;
@@ -85,7 +83,6 @@ io.on('connection', (socket) => {
     
     users.set(socket.id, userInfo);
     
-    // Set room owner
     if (isHost) {
       roomOwners.set(roomName, socket.id);
       if (!roomModerators.has(roomName)) {
@@ -140,13 +137,11 @@ io.on('connection', (socket) => {
       return;
     }
     
-    // Update user avatar
     if (avatar && users.has(socket.id)) {
       users.get(socket.id).avatar = avatar;
       socket.to(roomName).emit('avatarUpdated', { userId: socket.id, avatar });
     }
     
-    // Update message count
     const user = users.get(socket.id);
     if (user) {
       user.messagesSent = (user.messagesSent || 0) + 1;
@@ -173,7 +168,6 @@ io.on('connection', (socket) => {
       const user = users.get(socket.id);
       if (user) {
         user.avatar = avatar;
-        // Notify all rooms
         for (const [roomName, roomUsers] of rooms) {
           if (Array.from(roomUsers).some(u => u.id === socket.id)) {
             socket.to(roomName).emit('avatarUpdated', { userId: socket.id, avatar });
@@ -183,7 +177,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Admin Controls
   socket.on('setModerator', ({ roomName, targetUser }) => {
     const role = getUserRole(socket.id, roomName);
     if (role !== 'owner') {
@@ -215,7 +208,6 @@ io.on('connection', (socket) => {
       return;
     }
     
-    // Find and kick the user
     for (const [sockId, user] of users) {
       if (user.username === targetUser && user.room === roomName) {
         io.to(sockId).emit('userKicked');
@@ -250,7 +242,6 @@ io.on('connection', (socket) => {
     }
     bannedUsers.get(roomName).add(targetUser);
     
-    // Kick the user
     for (const [sockId, user] of users) {
       if (user.username === targetUser && user.room === roomName) {
         io.to(sockId).emit('userBanned');
@@ -323,7 +314,6 @@ io.on('connection', (socket) => {
     socket.emit('bannedUsersList', { bannedUsers: banned });
   });
 
-  // Thread events
   socket.on('createThread', ({ roomName, parentMessageId, threadName, username }) => {
     const threadId = uuidv4();
     const thread = {
@@ -373,7 +363,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Private messages
   socket.on('privateMessage', ({ toUserId, fromUsername, message, messageId }) => {
     const dmId = [socket.id, toUserId].sort().join('-');
     
@@ -401,12 +390,10 @@ io.on('connection', (socket) => {
     socket.emit('dmHistory', { userId, messages: history });
   });
 
-  // Soundboard
   socket.on('playSound', ({ roomName, soundId, username }) => {
     socket.to(roomName).emit('playSound', { soundId, username });
   });
 
-  // Reactions
   socket.on('addReaction', ({ roomName, messageId, emoji, username }) => {
     io.to(roomName).emit('reactionAdded', {
       messageId,
@@ -425,12 +412,10 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Typing
   socket.on('typing', ({ roomName, username, isTyping }) => {
     socket.to(roomName).emit('userTyping', { username, isTyping });
   });
 
-  // Disconnect
   socket.on('disconnect', () => {
     console.log(`🔌 Player disconnected: ${socket.id}`);
     

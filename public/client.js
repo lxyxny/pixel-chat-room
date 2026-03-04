@@ -127,7 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentThread = null;
   let currentDM = null;
   const sentDMMessages = new Set();
-  const usersMap = new Map();
+  const usersMap = new Map(); // ✅ FIXED: Renamed from 'users'
   let selectedUser = null;
   let myAvatar = null;
 
@@ -272,7 +272,6 @@ document.addEventListener('DOMContentLoaded', () => {
     profileRoomsEl.textContent = user.roomsJoined || 1;
     profileMessagesEl.textContent = user.messagesSent || 0;
     
-    // Avatar
     if (user.avatar) {
       profileAvatarImg.src = user.avatar;
       profileAvatarImg.style.display = 'block';
@@ -282,13 +281,11 @@ document.addEventListener('DOMContentLoaded', () => {
       avatarPlaceholder.style.display = 'flex';
     }
     
-    // Show banned status
     if (user.isBanned) {
       profileStatusEl.textContent = 'Banned';
       profileStatusEl.style.color = '#ff4757';
     }
     
-    // Show controls based on role
     ownerControls.classList.add('hidden');
     modControls.classList.add('hidden');
     unbanBtn.classList.add('hidden');
@@ -778,7 +775,7 @@ document.addEventListener('DOMContentLoaded', () => {
           myAvatar = event.target.result;
           socket.emit('updateAvatar', { avatar: myAvatar });
           addSystemMessage('✅ Avatar updated!');
-          updateUserList(Array.from(users.values()));
+          updateUserList(Array.from(usersMap.values()));
         };
         reader.readAsDataURL(file);
       }
@@ -1003,56 +1000,59 @@ document.addEventListener('DOMContentLoaded', () => {
     addSystemMessage('⚠️ Connection error. Refresh page.');
   });
 
-socket.on('joinedRoom', ({ roomName, users, socketId, isHost: hostStatus, role }) => {
-  console.log('✅ Joined room:', roomName);
-  mySocketId = socketId;
-  isHost = hostStatus;
-  myRole = role || (isHost ? 'owner' : 'member');
-  
-  if (roomDisplay) roomDisplay.textContent = roomName;
-  
-  // ✅ FIX: Clear the users Map properly
-  usersMap.clear();
-  
-  // ✅ FIX: users is an array from server, store in usersMap
-  if (Array.isArray(users)) {
-    users.forEach(u => {
+  socket.on('joinedRoom', ({ roomName, users, socketId, isHost: hostStatus, role }) => {
+    console.log('✅ Joined room:', roomName);
+    mySocketId = socketId;
+    isHost = hostStatus;
+    myRole = role || (isHost ? 'owner' : 'member');
+    
+    if (roomDisplay) roomDisplay.textContent = roomName;
+    
+    // ✅ FIXED: Clear usersMap properly
+    usersMap.clear();
+    
+    // ✅ FIXED: users is an array from server
+    if (Array.isArray(users)) {
+      users.forEach(u => {
+        usersMap.set(u.id, u);
+      });
+    }
+    
+    updateUserList(users);
+    showScreen(chatScreen);
+    addSystemMessage(`🎮 Connected to ${roomName}${myRole === 'owner' ? ' (OWNER)' : myRole === 'mod' ? ' (MOD)' : ''}`);
+    if (messageInput) messageInput.focus();
+    playSystemSound('join');
+    showServerURL();
+  });
+
+  socket.on('chatMessage', (data) => {
+    console.log('📥 Received message:', data.username);
+    if (data.avatar) {
+      if (!usersMap.has(data.senderId)) {
+        usersMap.set(data.senderId, { id: data.senderId, username: data.username, avatar: data.avatar });
+      } else {
+        usersMap.get(data.senderId).avatar = data.avatar;
+      }
+    }
+    addMessage(data, false);
+    scrollToBottom();
+    playSystemSound('receive');
+  });
+
+  socket.on('systemMessage', ({ text }) => {
+    addSystemMessage(text);
+    scrollToBottom();
+  });
+
+  socket.on('updateUsers', (usersList) => {
+    usersMap.clear();
+    usersList.forEach(u => {
       usersMap.set(u.id, u);
     });
-  }
-  
-  updateUserList(users);
-  showScreen(chatScreen);
-  addSystemMessage(`🎮 Connected to ${roomName}${myRole === 'owner' ? ' (OWNER)' : myRole === 'mod' ? ' (MOD)' : ''}`);
-  if (messageInput) messageInput.focus();
-  playSystemSound('join');
-  showServerURL();
-});
-
-socket.on('chatMessage', (data) => {
-  console.log('📥 Received message:', data.username);
-  if (data.avatar) {
-    if (!usersMap.has(data.senderId)) {
-      usersMap.set(data.senderId, { id: data.senderId, username: data.username, avatar: data.avatar });
-    } else {
-      usersMap.get(data.senderId).avatar = data.avatar;
-    }
-  }
-  addMessage(data, false);
-  scrollToBottom();
-  playSystemSound('receive');
-});
-
-// In socket.on('updateUsers')
-socket.on('updateUsers', (usersList) => {
-  usersMap.clear();
-  usersList.forEach(u => {
-    usersMap.set(u.id, u);
+    updateUserList(usersList);
+    updateDMUsersList(usersList);
   });
-  updateUserList(usersList);
-  updateDMUsersList(usersList);
-});
-
 
   socket.on('userTyping', ({ username, isTyping }) => {
     if (isTyping && username !== myUsername) {
@@ -1097,7 +1097,6 @@ socket.on('updateUsers', (usersList) => {
     addSystemMessage(`⭐ ${username} is now a moderator!`);
   });
 
-  // Thread events
   socket.on('threadCreated', ({ threadId, threadName, createdBy }) => {
     threads.set(threadId, { id: threadId, name: threadName, messages: [] });
     addSystemMessage(`🧵 ${createdBy} created thread: ${threadName}`);
@@ -1118,7 +1117,6 @@ socket.on('updateUsers', (usersList) => {
     }
   });
 
-  // DM events
   socket.on('privateMessage', (data) => {
     if (data.messageId && sentDMMessages.has(data.messageId)) {
       return;
@@ -1150,6 +1148,7 @@ socket.on('updateUsers', (usersList) => {
       updateUserList(Array.from(usersMap.values()));
     }
   });
+
   // ===== HELPERS =====
   function parseMarkdown(text) {
     if (!text) return '';
@@ -1160,39 +1159,30 @@ socket.on('updateUsers', (usersList) => {
     return escaped;
   }
 
-function addMessage(data, isSelf) {
-  if (!messagesEl) return;
-  
-  const msgEl = document.createElement('div');
-  msgEl.className = 'message new';
-  msgEl.dataset.id = data.id;
-  msgEl.dataset.username = data.username;
-  msgEl.dataset.text = data.message;
-  setTimeout(() => msgEl.classList.remove('new'), 500);
-  
-  if (data.senderId === socket.id) {
-    msgEl.classList.add('self');
-    msgEl.style.borderColor = 'var(--pixel-accent)';
-  }
-  
-  // ✅ FIX: Use usersMap instead of users
-  const user = usersMap.get(data.senderId);
-  const avatar = data.avatar || (user ? user.avatar : null);
-  
-  let avatarHtml = '';
-  if (avatar) {
-    avatarHtml = `
-      <div class="avatar">
-        <img src="${avatar}" alt="avatar" />
-      </div>
-    `;
-  } else {
-    avatarHtml = `
-      <div class="avatar">
-        <div class="avatar-placeholder">👤</div>
-      </div>
-    `;
-  }
+  function addMessage(data, isSelf) {
+    if (!messagesEl) return;
+    
+    const msgEl = document.createElement('div');
+    msgEl.className = 'message new';
+    msgEl.dataset.id = data.id;
+    msgEl.dataset.username = data.username;
+    msgEl.dataset.text = data.message;
+    setTimeout(() => msgEl.classList.remove('new'), 500);
+    
+    if (data.senderId === socket.id) {
+      msgEl.classList.add('self');
+      msgEl.style.borderColor = 'var(--pixel-accent)';
+    }
+    
+    const user = usersMap.get(data.senderId);
+    const avatar = data.avatar || (user ? user.avatar : null);
+    
+    let avatarHtml = '';
+    if (avatar) {
+      avatarHtml = `<div class="avatar"><img src="${avatar}" alt="avatar" /></div>`;
+    } else {
+      avatarHtml = `<div class="avatar"><div class="avatar-placeholder">👤</div></div>`;
+    }
     
     let content = '';
     
@@ -1252,10 +1242,10 @@ function addMessage(data, isSelf) {
     messagesEl.appendChild(msgEl);
   }
 
-   window.openProfileFromMessage = function(username, userId) {
-     const user = usersMap.get(userId) || { username, id: userId };
-     openProfileModal(user);
-   };
+  window.openProfileFromMessage = function(username, userId) {
+    const user = usersMap.get(userId) || { username, id: userId };
+    openProfileModal(user);
+  };
 
   function addSystemMessage(text) {
     if (!messagesEl) return;
@@ -1267,51 +1257,42 @@ function addMessage(data, isSelf) {
   }
 
   function updateUserList(usersList) {
-  if (!userListEl) return;
-  userListEl.innerHTML = '';
-  const seen = new Set();
-  usersList.forEach(user => {
-    if (seen.has(user.username)) return;
-    seen.add(user.username);
-    const li = document.createElement('li');
-    
-    // Avatar
-    let avatarHtml = '';
-    if (user.avatar) {
-      avatarHtml = `
-        <div class="user-avatar">
-          <img src="${user.avatar}" alt="avatar" />
-        </div>
-      `;
-    } else {
-      avatarHtml = `
-        <div class="user-avatar">
-          <div class="user-avatar-placeholder">👤</div>
-        </div>
-      `;
-    }
-    
-    li.innerHTML = `
-      ${avatarHtml}
-      <span class="username-text">${user.username}</span>
-      ${user.role === 'owner' ? '<span class="user-role owner">👑</span>' : ''}
-      ${user.role === 'mod' ? '<span class="user-role mod">🛡️</span>' : ''}
-      ${user.isBanned ? '<span class="user-role banned">🚫</span>' : ''}
-    `;
-    
-    li.addEventListener('click', () => {
-      if (user.id !== mySocketId) {
-        openProfileModal(user);
+    if (!userListEl) return;
+    userListEl.innerHTML = '';
+    const seen = new Set();
+    usersList.forEach(user => {
+      if (seen.has(user.username)) return;
+      seen.add(user.username);
+      const li = document.createElement('li');
+      
+      let avatarHtml = '';
+      if (user.avatar) {
+        avatarHtml = `<div class="user-avatar"><img src="${user.avatar}" alt="avatar" /></div>`;
       } else {
-        uploadAvatar();
+        avatarHtml = `<div class="user-avatar"><div class="user-avatar-placeholder">👤</div></div>`;
       }
+      
+      li.innerHTML = `
+        ${avatarHtml}
+        <span class="username-text">${user.username}</span>
+        ${user.role === 'owner' ? '<span class="user-role owner">👑</span>' : ''}
+        ${user.role === 'mod' ? '<span class="user-role mod">🛡️</span>' : ''}
+        ${user.isBanned ? '<span class="user-role banned">🚫</span>' : ''}
+      `;
+      
+      li.addEventListener('click', () => {
+        if (user.id !== mySocketId) {
+          openProfileModal(user);
+        } else {
+          uploadAvatar();
+        }
+      });
+      
+      userListEl.appendChild(li);
     });
     
-    userListEl.appendChild(li);
-  });
-  
-  if (userCountEl) userCountEl.textContent = usersList.length;
-}
+    if (userCountEl) userCountEl.textContent = usersList.length;
+  }
 
   function updateDMUsersList(usersList) {
     if (!dmUsersList) return;
@@ -1442,7 +1423,7 @@ function addMessage(data, isSelf) {
   // ===== INIT =====
   console.log('🎮 Pixel Chat Ready!');
   console.log('🔌 Socket:', socket.connected ? 'Connected' : 'Disconnected');
-  console.log('🧵 Threads: Enabled (hidden until created)');
+  console.log('🧵 Threads: Enabled');
   console.log('📩 DMs: Enabled');
   console.log('🎵 Soundboard: Enabled');
   console.log('👤 Profiles: Enabled');
