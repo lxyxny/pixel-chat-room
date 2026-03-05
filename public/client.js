@@ -247,15 +247,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function showPanel(panelId) {
+    // Remove active from all panels and tabs — CSS visibility keeps DOM content intact
     document.querySelectorAll('.chat-panel').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
 
     const panel = document.getElementById(panelId);
     if (panel) panel.classList.add('active');
 
-    // Map panel IDs to their data-tab values
     const panelToTab = {
       'main-chat-panel': 'main',
+      'dms-panel': 'dms',
       'threads-panel': 'threads'
     };
     const tabName = panelToTab[panelId] || panelId.replace('-panel', '');
@@ -316,18 +317,134 @@ document.addEventListener('DOMContentLoaded', () => {
     if (roomControlsModal) roomControlsModal.classList.add('hidden');
   }
 
+  // ===== DM STATE =====
+  let activeDmUserId = null;
+  let activeDmUsername = null;
+  const dmConversations = new Map(); // userId -> [{from,fromUsername,message,timestamp}]
+
+  const dmPanel = document.getElementById('dms-panel');
+  const dmList = document.getElementById('dm-list');
+  const dmConversation = document.getElementById('dm-conversation');
+  const dmConvUsername = document.getElementById('dm-conv-username');
+  const dmMessages = document.getElementById('dm-messages');
+  const dmMessageInput = document.getElementById('dm-message-input');
+  const dmSendBtn = document.getElementById('dm-send-btn');
+  const dmBackBtn = document.getElementById('dm-back-btn');
+
   function openDM(userId, username) {
-    // Request DM history and show a simple DM panel
+    // Switch to DMs tab
+    showPanel('dms-panel');
+
+    activeDmUserId = userId;
+    activeDmUsername = username;
+
+    // Show conversation view
+    if (dmList) dmList.classList.add('hidden');
+    if (dmConversation) dmConversation.classList.remove('hidden');
+    if (dmConvUsername) dmConvUsername.textContent = '📩 ' + username;
+
+    // Load history
     socket.emit('getDMHistory', { userId });
-    addSystemMessage(`📩 Opening DM with ${username}... (DM history loaded in console)`);
-    socket.once('dmHistory', ({ messages }) => {
-      if (messages.length === 0) {
-        addSystemMessage(`📩 No DM history with ${username} yet. Send them a message!`);
-      } else {
-        messages.forEach(msg => {
-          addSystemMessage(`📩 [DM] ${msg.fromUsername}: ${msg.message}`);
-        });
-      }
+
+    // Render existing messages
+    renderDmMessages(userId);
+
+    if (dmMessageInput) dmMessageInput.focus();
+  }
+
+  function renderDmMessages(userId) {
+    if (!dmMessages) return;
+    dmMessages.innerHTML = '';
+    const msgs = dmConversations.get(userId) || [];
+    msgs.forEach(msg => addDmMessage(msg));
+    dmMessages.scrollTop = dmMessages.scrollHeight;
+  }
+
+  function addDmMessage(msg) {
+    if (!dmMessages) return;
+    const isSelf = msg.from === mySocketId || msg.fromUsername === myUsername;
+    const el = document.createElement('div');
+    el.className = 'message' + (isSelf ? ' self' : '');
+    el.innerHTML = \`
+      <div class="avatar"><div class="avatar-placeholder">👤</div></div>
+      <div class="content">
+        <span class="meta">
+          <span class="username">\${escapeHtml(msg.fromUsername)}</span>
+          <span class="time">[\${msg.timestamp || ''}]</span>
+        </span>
+        <span class="text">\${parseMarkdown(escapeHtml(msg.message))}</span>
+      </div>
+    \`;
+    dmMessages.appendChild(el);
+    dmMessages.scrollTop = dmMessages.scrollHeight;
+  }
+
+  function updateDmList() {
+    if (!dmList) return;
+    dmList.innerHTML = '';
+    if (dmConversations.size === 0) {
+      dmList.innerHTML = '<p class="pixel-hint" style="margin-top:16px; text-align:center;">Click a user in the sidebar to start a DM</p>';
+      return;
+    }
+    dmConversations.forEach((msgs, userId) => {
+      const lastMsg = msgs[msgs.length - 1];
+      if (!lastMsg) return;
+      const otherUser = lastMsg.fromUsername === myUsername
+        ? (usersMap.get(userId)?.username || userId)
+        : lastMsg.fromUsername;
+      const entry = document.createElement('div');
+      entry.className = 'dm-entry';
+      entry.innerHTML = \`
+        <div style="width:32px;height:32px;border-radius:50%;background:var(--pixel-border);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">👤</div>
+        <div style="flex:1;min-width:0;">
+          <div class="dm-name">\${escapeHtml(otherUser)}</div>
+          <div style="font-size:7px;color:var(--pixel-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">\${escapeHtml(lastMsg.message.substring(0,40))}</div>
+        </div>
+      \`;
+      entry.addEventListener('click', () => openDM(userId, otherUser));
+      dmList.appendChild(entry);
+    });
+  }
+
+  // DM send
+  if (dmSendBtn) dmSendBtn.addEventListener('click', sendDmMessage);
+  if (dmMessageInput) dmMessageInput.addEventListener('keypress', e => { if (e.key === 'Enter') sendDmMessage(); });
+
+  function sendDmMessage() {
+    if (!dmMessageInput || !activeDmUserId || !myUsername) return;
+    const message = dmMessageInput.value.trim();
+    if (!message) return;
+
+    const msgData = {
+      id: Date.now() + '-dm',
+      from: mySocketId,
+      fromUsername: myUsername,
+      to: activeDmUserId,
+      message,
+      timestamp: new Date().toLocaleTimeString()
+    };
+
+    socket.emit('privateMessage', {
+      toUserId: activeDmUserId,
+      fromUsername: myUsername,
+      message,
+      messageId: msgData.id
+    });
+
+    if (!dmConversations.has(activeDmUserId)) dmConversations.set(activeDmUserId, []);
+    dmConversations.get(activeDmUserId).push(msgData);
+    addDmMessage(msgData);
+    updateDmList();
+    dmMessageInput.value = '';
+  }
+
+  // DM back button
+  if (dmBackBtn) {
+    dmBackBtn.addEventListener('click', () => {
+      activeDmUserId = null;
+      activeDmUsername = null;
+      if (dmConversation) dmConversation.classList.add('hidden');
+      if (dmList) dmList.classList.remove('hidden');
     });
   }
 
@@ -350,18 +467,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ✅ NEW: Open DMs from start menu
+  // Open DMs from start menu
   if (openDmsBtn) {
     openDmsBtn.addEventListener('click', () => {
       initAudio();
       if (currentRoom) {
-        // Already in a room, show DM list
         showScreen(chatScreen);
-        showPanel('main-chat-panel');
-        // Open user list to select DM
-        addSystemMessage('📩 Right-click a user to open DM');
+        showPanel('dms-panel');
       } else {
-        addSystemMessage('⚠️ Join a room first to use DMs');
+        // show on start screen — do nothing useful, user must join first
       }
     });
   }
@@ -640,6 +754,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Map tab names to their actual panel element IDs
   const tabToPanelId = {
     'main': 'main-chat-panel',
+    'dms': 'dms-panel',
     'threads': 'threads-panel'
   };
 
@@ -650,6 +765,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const panelId = tabToPanelId[tabName] || `${tabName}-panel`;
       showPanel(panelId);
 
+      // When leaving threads tab, reset thread view state
       if (tabName !== 'threads') {
         if (threadView) threadView.classList.add('hidden');
         if (threadsList) threadsList.classList.remove('hidden');
@@ -1221,6 +1337,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // ===== PRIVATE MESSAGES =====
+  socket.on('privateMessage', (msg) => {
+    const otherId = msg.from === mySocketId ? msg.to : msg.from;
+    if (!dmConversations.has(otherId)) dmConversations.set(otherId, []);
+    // Avoid duplicates (we already added outgoing messages locally)
+    const existing = dmConversations.get(otherId);
+    const isDupe = existing.some(m => m.id === msg.id);
+    if (!isDupe) {
+      existing.push(msg);
+    }
+    updateDmList();
+    // If this DM is currently open, render it
+    if (activeDmUserId === otherId) {
+      if (!isDupe) addDmMessage(msg);
+    }
+  });
+
+  socket.on('dmHistory', ({ userId, messages }) => {
+    if (!dmConversations.has(userId)) dmConversations.set(userId, []);
+    const existing = dmConversations.get(userId);
+    messages.forEach(msg => {
+      if (!existing.some(m => m.id === msg.id)) {
+        existing.push(msg);
+      }
+    });
+    updateDmList();
+    if (activeDmUserId === userId) {
+      renderDmMessages(userId);
+    }
+  });
+
   // ===== HELPERS =====
   function parseMarkdown(text) {
     if (!text) return '';
@@ -1359,6 +1506,13 @@ document.addEventListener('DOMContentLoaded', () => {
           openProfileModal(user);
         } else {
           uploadAvatar();
+        }
+      });
+
+      li.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        if (user.id !== mySocketId) {
+          openDM(user.id, user.username);
         }
       });
       

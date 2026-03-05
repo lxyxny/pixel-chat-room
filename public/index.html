@@ -150,35 +150,60 @@
       <div class="chat-header">
         <h2 class="pixel-subtitle">ROOM: <span id="room-display">---</span></h2>
         <div class="header-actions">
+          <span id="typing-indicator" class="typing-indicator hidden"></span>
           <button id="soundboard-btn" class="pixel-btn small rounded" title="Soundboard">🎵</button>
           <button id="sound-toggle" class="pixel-btn small rounded" title="Toggle Sound">🔊</button>
-          <span id="typing-indicator" class="typing-indicator hidden"></span>
           <button id="leave-btn" class="pixel-btn small rounded">✕ LEAVE</button>
         </div>
       </div>
-      
+
       <div class="chat-layout">
+        <!-- LEFT: main content area -->
         <div class="main-chat">
           <div class="chat-tabs">
             <button class="tab-btn active rounded" data-tab="main">💬 MAIN</button>
+            <button class="tab-btn rounded" data-tab="dms">📩 DMS</button>
             <button class="tab-btn rounded hidden" data-tab="threads" id="threads-tab">🧵 THREADS</button>
           </div>
-          
+
+          <!-- MAIN CHAT PANEL -->
           <div id="main-chat-panel" class="chat-panel active">
             <div id="messages" class="pixel-messages"></div>
             <div id="reply-preview" class="reply-preview hidden">
-              <span>REPLYING TO: <strong id="reply-username"></strong></span>
+              <span>↩ <strong id="reply-username"></strong></span>
               <button id="cancel-reply" class="pixel-btn tiny rounded">✕</button>
             </div>
             <div class="input-area">
-              <label for="image-upload" class="pixel-btn icon-btn rounded" title="Upload">🖼️</label>
+              <label for="image-upload" class="pixel-btn icon-btn rounded" title="Upload image">🖼️</label>
               <input type="file" id="image-upload" accept="image/*" hidden />
-              <input type="text" id="message-input" placeholder="TYPE MESSAGE... (@bot for AI)" maxlength="500"/>
-              <button id="send-btn" class="pixel-btn rounded">▶ SEND</button>
+              <input type="text" id="message-input" placeholder="Message #main  (@bot for AI)" maxlength="500"/>
+              <button id="send-btn" class="pixel-btn rounded">▶</button>
             </div>
-            <p class="pixel-hint">*italic* **bold** ***both*** | Double-click to reply | @bot for AI</p>
           </div>
-          
+
+          <!-- DMS PANEL -->
+          <div id="dms-panel" class="chat-panel">
+            <div class="dm-layout">
+              <!-- DM conversation list -->
+              <div id="dm-list" class="dm-list">
+                <p class="pixel-hint" style="margin-top:16px;">Click a user in the sidebar to start a DM</p>
+              </div>
+              <!-- Active DM conversation -->
+              <div id="dm-conversation" class="dm-conversation hidden">
+                <div class="dm-conv-header">
+                  <button id="dm-back-btn" class="pixel-btn small rounded">← BACK</button>
+                  <span id="dm-conv-username" class="dm-conv-title"></span>
+                </div>
+                <div id="dm-messages" class="pixel-messages"></div>
+                <div class="input-area">
+                  <input type="text" id="dm-message-input" placeholder="Direct message..." maxlength="500"/>
+                  <button id="dm-send-btn" class="pixel-btn rounded">▶</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- THREADS PANEL -->
           <div id="threads-panel" class="chat-panel">
             <div id="threads-list" class="threads-list"></div>
             <div id="thread-view" class="thread-view hidden">
@@ -189,18 +214,18 @@
               <div id="thread-messages" class="thread-messages"></div>
               <div class="thread-input">
                 <input type="text" id="thread-message-input" placeholder="Reply in thread..."/>
-                <button id="send-thread-btn" class="pixel-btn small rounded">SEND</button>
+                <button id="send-thread-btn" class="pixel-btn small rounded">▶</button>
               </div>
             </div>
           </div>
         </div>
-        
+
+        <!-- RIGHT: sidebar -->
         <div class="sidebar">
           <div class="sidebar-section">
             <h3 class="pixel-label">PLAYERS <span id="user-count">0</span></h3>
             <ul id="user-list" class="pixel-list"></ul>
           </div>
-          
           <div id="soundboard-panel" class="soundboard-panel hidden">
             <h3 class="pixel-label">🎵 SOUNDBOARD</h3>
             <div class="sound-buttons">
