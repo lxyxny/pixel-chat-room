@@ -1,7 +1,7 @@
 {
   "name": "pixel-chat-room",
-  "version": "4.1.0",
-  "description": "Retro pixel art chat room with threads, DMs, voice & soundboard",
+  "version": "4.0.0",
+  "description": "Retro pixel art chat room",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

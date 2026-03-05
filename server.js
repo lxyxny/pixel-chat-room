@@ -61,6 +61,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('joinRoom', ({ roomName, username, isHost, avatar }) => {
+    console.log(`📥 joinRoom event: ${username} joining ${roomName} as ${isHost ? 'host' : 'member'}`);
+    
     if (bannedUsers.has(roomName) && bannedUsers.get(roomName).has(username)) {
       socket.emit('error', '🚫 You are banned from this room');
       return;
@@ -126,7 +128,7 @@ io.on('connection', (socket) => {
       role: getUserRole(socket.id, roomName)
     });
     
-    console.log(`🚪 ${username} joined room: ${roomName}`);
+    console.log(`✅ ${username} joined room: ${roomName} successfully`);
   });
 
   socket.on('chatMessage', ({ roomName, username, message, image, replyTo, avatar }) => {

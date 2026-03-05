@@ -6,19 +6,15 @@
   <title>🎮 Pixel Chat</title>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 </head>
 <body>
   <div class="pixel-container">
     
-    <!-- START MENU (Improved) -->
+    <!-- START MENU -->
     <div id="start-screen" class="screen active">
       <div class="start-menu-header">
         <h1 class="pixel-title glitch" data-text="PIXEL CHAT">PIXEL CHAT</h1>
-        <div class="floating-pixels">
-          <span class="pixel-float">👾</span>
-          <span class="pixel-float">🎮</span>
-          <span class="pixel-float">🕹️</span>
-        </div>
       </div>
       
       <div class="pixel-box start-menu">
@@ -41,12 +37,19 @@
       </div>
       
       <div class="start-menu-footer">
-        <p class="pixel-hint">Choose your adventure!</p>
-        <p class="pixel-hint" id="server-url"></p>
         <div class="animated-decoration">
           <span class="deco-pixel">◆</span>
           <span class="deco-pixel">◆</span>
           <span class="deco-pixel">◆</span>
+        </div>
+        <p class="pixel-hint">Choose your adventure!</p>
+        <p class="pixel-hint" id="server-url"></p>
+        <div class="floating-pixels-bottom">
+          <span class="pixel-float">👾</span>
+          <span class="pixel-float">🎮</span>
+          <span class="pixel-float">🕹️</span>
+          <span class="pixel-float">👾</span>
+          <span class="pixel-float">🎮</span>
         </div>
       </div>
     </div>
@@ -155,14 +158,12 @@
       </div>
       
       <div class="chat-layout">
-        <!-- Main Chat Area -->
         <div class="main-chat">
           <div class="chat-tabs">
             <button class="tab-btn active rounded" data-tab="main">💬 MAIN</button>
             <button class="tab-btn rounded hidden" data-tab="threads" id="threads-tab">🧵 THREADS</button>
           </div>
           
-          <!-- Main Chat -->
           <div id="main-chat-panel" class="chat-panel active">
             <div id="messages" class="pixel-messages"></div>
             <div id="reply-preview" class="reply-preview hidden">
@@ -178,7 +179,6 @@
             <p class="pixel-hint">*italic* **bold** ***both*** | Double-click to reply | @bot for AI</p>
           </div>
           
-          <!-- Threads Panel -->
           <div id="threads-panel" class="chat-panel">
             <div id="threads-list" class="threads-list"></div>
             <div id="thread-view" class="thread-view hidden">
@@ -195,14 +195,12 @@
           </div>
         </div>
         
-        <!-- Sidebar -->
         <div class="sidebar">
           <div class="sidebar-section">
             <h3 class="pixel-label">PLAYERS <span id="user-count">0</span></h3>
             <ul id="user-list" class="pixel-list"></ul>
           </div>
           
-          <!-- Soundboard Panel -->
           <div id="soundboard-panel" class="soundboard-panel hidden">
             <h3 class="pixel-label">🎵 SOUNDBOARD</h3>
             <div class="sound-buttons">
@@ -288,7 +286,7 @@
     </div>
   </div>
 
-  <!-- CONTEXT MENU (Right-click) -->
+  <!-- CONTEXT MENU -->
   <div id="context-menu" class="context-menu hidden">
     <div class="context-item" data-action="profile">👤 View Profile</div>
     <div class="context-item" data-action="dm">📩 Open DM</div>
@@ -296,7 +294,6 @@
   </div>
 
   <script>
-    // Load saved colors IMMEDIATELY
     const savedColors = localStorage.getItem('pixelChatColors');
     if (savedColors) {
       try {
@@ -322,13 +319,11 @@
       }
     }
     
-    // Show server URL
     const serverUrlEl = document.getElementById('server-url');
     if (serverUrlEl && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
       serverUrlEl.textContent = `🌐 ${window.location.origin}`;
     }
     
-    // Initialize audio
     window.audioContext = null;
     window.audioEnabled = false;
     
