@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const startScreen = document.getElementById('start-screen');
   const joinRoomBtn = document.getElementById('join-room-btn');
   const hostRoomBtn = document.getElementById('host-room-btn');
+  const openDmsBtn = document.getElementById('open-dms-btn'); // ✅ NEW
   const customizeBtn = document.getElementById('customize-btn');
   const serverUrlEl = document.getElementById('server-url');
 
@@ -36,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const buttonOpacitySlider = document.getElementById('button-opacity-slider');
   const textOpacitySlider = document.getElementById('text-opacity-slider');
   const showAvatarsToggle = document.getElementById('show-avatars-toggle');
+  const groqApiKeyInput = document.getElementById('groq-api-key');
   const uiOpacityValue = document.getElementById('ui-opacity-value');
   const buttonOpacityValue = document.getElementById('button-opacity-value');
   const textOpacityValue = document.getElementById('text-opacity-value');
@@ -65,7 +67,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const tabBtns = document.querySelectorAll('.tab-btn');
   const mainChatPanel = document.getElementById('main-chat-panel');
   const threadsPanel = document.getElementById('threads-panel');
-  const dmsPanel = document.getElementById('dms-panel');
   const threadsTab = document.getElementById('threads-tab');
 
   // Threads
@@ -76,15 +77,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const threadMessageInput = document.getElementById('thread-message-input');
   const sendThreadBtn = document.getElementById('send-thread-btn');
   const closeThreadBtn = document.getElementById('close-thread-btn');
-
-  // DMs
-  const dmUsersList = document.getElementById('dm-users-list');
-  const dmChat = document.getElementById('dm-chat');
-  const dmUsernameEl = document.getElementById('dm-username');
-  const dmMessagesEl = document.getElementById('dm-messages');
-  const dmMessageInput = document.getElementById('dm-message-input');
-  const sendDmBtn = document.getElementById('send-dm-btn');
-  const closeDmBtn = document.getElementById('close-dm-btn');
 
   // Profile Modal
   const profileModal = document.getElementById('profile-modal');
@@ -103,12 +95,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const banBtn = document.getElementById('ban-btn');
   const unbanBtn = document.getElementById('unban-btn');
   const modKickBtn = document.getElementById('mod-kick-btn');
+  const openDmFromProfileBtn = document.getElementById('open-dm-from-profile-btn');
 
   // Room Controls Modal
   const roomControlsModal = document.getElementById('room-controls-modal');
   const closeRoomControlsBtn = document.getElementById('close-room-controls-btn');
   const deleteRoomBtn = document.getElementById('delete-room-btn');
   const viewBannedBtn = document.getElementById('view-banned-btn');
+
+  // Context Menu
+  const contextMenu = document.getElementById('context-menu');
 
   // ===== STATE =====
   let currentRoom = null;
@@ -118,18 +114,17 @@ document.addEventListener('DOMContentLoaded', () => {
   let myRole = 'member';
   let pendingReply = null;
   let pendingImage = null;
-  let pendingAvatar = null;
   let isTyping = false;
   let typingTimer = null;
   let selectedMessageId = null;
   const messageReactions = new Map();
   const threads = new Map();
   let currentThread = null;
-  let currentDM = null;
   const sentDMMessages = new Set();
-  const usersMap = new Map(); // ✅ FIXED: Renamed from 'users'
+  const usersMap = new Map();
   let selectedUser = null;
   let myAvatar = null;
+  let groqApiKey = '';
 
   // ===== AUDIO =====
   window.audioContext = null;
@@ -311,16 +306,6 @@ document.addEventListener('DOMContentLoaded', () => {
     selectedUser = null;
   }
 
-  function openRoomControlsModal() {
-    if (roomControlsModal && myRole === 'owner') {
-      roomControlsModal.classList.remove('hidden');
-    }
-  }
-
-  function closeRoomControlsModal() {
-    if (roomControlsModal) roomControlsModal.classList.add('hidden');
-  }
-
   // ===== START MENU =====
   if (joinRoomBtn) {
     joinRoomBtn.addEventListener('click', () => {
@@ -337,6 +322,22 @@ document.addEventListener('DOMContentLoaded', () => {
       roomTitle.textContent = 'HOST ROOM';
       showScreen(roomScreen);
       usernameInput?.focus();
+    });
+  }
+
+  // ✅ NEW: Open DMs from start menu
+  if (openDmsBtn) {
+    openDmsBtn.addEventListener('click', () => {
+      initAudio();
+      if (currentRoom) {
+        // Already in a room, show DM list
+        showScreen(chatScreen);
+        showPanel('main-chat-panel');
+        // Open user list to select DM
+        addSystemMessage('📩 Right-click a user to open DM');
+      } else {
+        addSystemMessage('⚠️ Join a room first to use DMs');
+      }
     });
   }
 
@@ -408,6 +409,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (buttonOpacitySlider) buttonOpacitySlider.value = colors.buttonOpacity || '1';
       if (textOpacitySlider) textOpacitySlider.value = colors.textOpacity || '1';
       if (showAvatarsToggle) showAvatarsToggle.checked = colors.showAvatars !== false;
+      if (groqApiKeyInput) groqApiKeyInput.value = colors.groqApiKey || '';
     }
     updateColorPreviews();
     updateOpacityValues();
@@ -518,6 +520,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  if (groqApiKeyInput) {
+    groqApiKeyInput.addEventListener('input', () => {
+      groqApiKey = groqApiKeyInput.value.trim();
+    });
+  }
+
   if (saveColorsBtn) {
     saveColorsBtn.addEventListener('click', () => {
       const colors = {
@@ -530,7 +538,8 @@ document.addEventListener('DOMContentLoaded', () => {
         uiOpacity: uiOpacitySlider?.value || '1',
         buttonOpacity: buttonOpacitySlider?.value || '1',
         textOpacity: textOpacitySlider?.value || '1',
-        showAvatars: showAvatarsToggle?.checked !== false
+        showAvatars: showAvatarsToggle?.checked !== false,
+        groqApiKey: groqApiKeyInput?.value || ''
       };
       localStorage.setItem('pixelChatColors', JSON.stringify(colors));
       
@@ -565,6 +574,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (buttonOpacitySlider) buttonOpacitySlider.value = '1';
       if (textOpacitySlider) textOpacitySlider.value = '1';
       if (showAvatarsToggle) showAvatarsToggle.checked = true;
+      if (groqApiKeyInput) groqApiKeyInput.value = '';
       updateColorPreviews();
       updateOpacityValues();
       
@@ -589,7 +599,7 @@ document.addEventListener('DOMContentLoaded', () => {
     backToStartCustomizeBtn.addEventListener('click', () => showScreen(startScreen));
   }
 
-  // ===== TABS =====
+  // ===== TABS - ✅ FIXED: Main chat always shows when switching =====
   tabBtns.forEach(tab => {
     tab.addEventListener('click', () => {
       const tabName = tab.dataset.tab;
@@ -599,11 +609,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (threadView) threadView.classList.add('hidden');
         if (threadsList) threadsList.classList.remove('hidden');
         currentThread = null;
-      }
-      if (tabName !== 'dms') {
-        if (dmChat) dmChat.classList.add('hidden');
-        if (dmUsersList) dmUsersList.classList.remove('hidden');
-        currentDM = null;
       }
     });
   });
@@ -651,7 +656,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function sendMessage() {
+  async function sendMessage() {
     if (!messageInput) return;
     
     const message = messageInput.value.trim();
@@ -664,6 +669,46 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!currentRoom || !myUsername) {
       addSystemMessage('⚠️ Not connected to a room');
       return;
+    }
+    
+    // ✅ Check for @bot mention
+    if (message.includes('@bot') && groqApiKey) {
+      const botMessage = message.replace('@bot', '').trim();
+      if (botMessage) {
+        addSystemMessage('🤖 Asking AI...');
+        try {
+          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${groqApiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: 'llama-3.1-8b-instant',
+              messages: [
+                { role: 'system', content: 'You are a helpful chatbot in a pixel art chat room. Keep responses short and friendly.' },
+                { role: 'user', content: botMessage }
+              ],
+              max_tokens: 150
+            })
+          });
+          const data = await response.json();
+          const botReply = data.choices?.[0]?.message?.content || 'Sorry, I could not process that.';
+          
+          // Add bot message to chat
+          addMessage({
+            username: '🤖 Bot',
+            message: botReply,
+            id: Date.now() + '-bot',
+            timestamp: new Date().toLocaleTimeString(),
+            senderId: 'bot',
+            isBot: true
+          }, false);
+          playSystemSound('receive');
+        } catch (error) {
+          addSystemMessage('⚠️ Bot error: ' + error.message);
+        }
+      }
     }
     
     socket.emit('chatMessage', {
@@ -843,6 +888,15 @@ document.addEventListener('DOMContentLoaded', () => {
     closeProfileBtn.addEventListener('click', closeProfileModal);
   }
 
+  if (openDmFromProfileBtn) {
+    openDmFromProfileBtn.addEventListener('click', () => {
+      if (selectedUser) {
+        openDM(selectedUser.id, selectedUser.username);
+        closeProfileModal();
+      }
+    });
+  }
+
   if (setModBtn) {
     setModBtn.addEventListener('click', () => {
       if (selectedUser && currentRoom) {
@@ -910,6 +964,47 @@ document.addEventListener('DOMContentLoaded', () => {
     closeRoomControlsBtn.addEventListener('click', closeRoomControlsModal);
   }
 
+  // ===== CONTEXT MENU (Right-click on user) =====
+  document.addEventListener('contextmenu', (e) => {
+    const userEl = e.target.closest('.pixel-list li');
+    if (userEl && currentRoom) {
+      e.preventDefault();
+      const userId = userEl.dataset.userId;
+      const username = userEl.querySelector('.username-text')?.textContent;
+      
+      if (userId && username) {
+        selectedUser = usersMap.get(userId) || { id: userId, username };
+        
+        contextMenu.style.left = `${e.pageX}px`;
+        contextMenu.style.top = `${e.pageY}px`;
+        contextMenu.classList.remove('hidden');
+        
+        // Set up context menu actions
+        contextMenu.querySelectorAll('.context-item').forEach(item => {
+          item.onclick = () => {
+            const action = item.dataset.action;
+            if (action === 'profile') {
+              openProfileModal(selectedUser);
+            } else if (action === 'dm') {
+              openDM(userId, username);
+            } else if (action === 'mention') {
+              messageInput.value += `@${username} `;
+              messageInput.focus();
+            }
+            contextMenu.classList.add('hidden');
+          };
+        });
+      }
+    }
+  });
+
+  // Hide context menu on click elsewhere
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.context-menu') && !e.target.closest('.pixel-list li')) {
+      contextMenu.classList.add('hidden');
+    }
+  });
+
   // ===== THREADS =====
   if (closeThreadBtn) {
     closeThreadBtn.addEventListener('click', () => {
@@ -944,52 +1039,6 @@ document.addEventListener('DOMContentLoaded', () => {
     threadMessageInput.value = '';
   }
 
-  // ===== DMS =====
-  if (closeDmBtn) {
-    closeDmBtn.addEventListener('click', () => {
-      dmChat.classList.add('hidden');
-      dmUsersList.classList.remove('hidden');
-      currentDM = null;
-    });
-  }
-
-  if (sendDmBtn) {
-    sendDmBtn.addEventListener('click', sendDM);
-  }
-
-  if (dmMessageInput) {
-    dmMessageInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') sendDM();
-    });
-  }
-
-  function sendDM() {
-    if (!currentDM || !dmMessageInput) return;
-    
-    const message = dmMessageInput.value.trim();
-    if (!message) return;
-    
-    const messageId = Date.now() + '-dm-' + Math.random().toString(36).substr(2, 9);
-    sentDMMessages.add(messageId);
-    
-    socket.emit('privateMessage', {
-      toUserId: currentDM.userId,
-      fromUsername: myUsername,
-      message,
-      messageId
-    });
-    
-    addDMMessage({
-      from: mySocketId,
-      fromUsername: myUsername,
-      message,
-      timestamp: new Date().toLocaleTimeString(),
-      id: messageId
-    });
-    
-    dmMessageInput.value = '';
-  }
-
   // ===== SOCKET EVENTS =====
   socket.on('connect', () => {
     console.log('✅ Socket connected:', socket.id);
@@ -1008,10 +1057,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if (roomDisplay) roomDisplay.textContent = roomName;
     
-    // ✅ FIXED: Clear usersMap properly
     usersMap.clear();
     
-    // ✅ FIXED: users is an array from server
     if (Array.isArray(users)) {
       users.forEach(u => {
         usersMap.set(u.id, u);
@@ -1020,6 +1067,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     updateUserList(users);
     showScreen(chatScreen);
+    // ✅ FIXED: Always show main chat panel when joining
+    showPanel('main-chat-panel');
     addSystemMessage(`🎮 Connected to ${roomName}${myRole === 'owner' ? ' (OWNER)' : myRole === 'mod' ? ' (MOD)' : ''}`);
     if (messageInput) messageInput.focus();
     playSystemSound('join');
@@ -1051,7 +1100,6 @@ document.addEventListener('DOMContentLoaded', () => {
       usersMap.set(u.id, u);
     });
     updateUserList(usersList);
-    updateDMUsersList(usersList);
   });
 
   socket.on('userTyping', ({ username, isTyping }) => {
@@ -1117,26 +1165,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  socket.on('privateMessage', (data) => {
-    if (data.messageId && sentDMMessages.has(data.messageId)) {
-      return;
-    }
-    
-    if (currentDM && (data.from === currentDM.userId || data.to === mySocketId)) {
-      addDMMessage(data);
-      playSystemSound('receive');
-    } else {
-      addSystemMessage(`📩 New DM from ${data.fromUsername}`);
-    }
-  });
-
-  socket.on('dmHistory', ({ userId, messages }) => {
-    if (currentDM && currentDM.userId === userId) {
-      dmMessagesEl.innerHTML = '';
-      messages.forEach(msg => addDMMessage(msg));
-    }
-  });
-
   socket.on('playSound', ({ soundId, username }) => {
     playSound(soundId);
     addSystemMessage(`🔊 ${username} played ${soundId}`);
@@ -1164,6 +1192,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const msgEl = document.createElement('div');
     msgEl.className = 'message new';
+    if (data.isBot) msgEl.classList.add('bot');
     msgEl.dataset.id = data.id;
     msgEl.dataset.username = data.username;
     msgEl.dataset.text = data.message;
@@ -1264,6 +1293,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (seen.has(user.username)) return;
       seen.add(user.username);
       const li = document.createElement('li');
+      li.dataset.userId = user.id;
       
       let avatarHtml = '';
       if (user.avatar) {
@@ -1292,54 +1322,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     if (userCountEl) userCountEl.textContent = usersList.length;
-  }
-
-  function updateDMUsersList(usersList) {
-    if (!dmUsersList) return;
-    dmUsersList.innerHTML = '';
-    
-    usersList.forEach(user => {
-      if (user.id === mySocketId) return;
-      
-      const item = document.createElement('div');
-      item.className = 'dm-user-item';
-      item.textContent = `📩 ${user.username}`;
-      item.addEventListener('click', () => openDM(user.id, user.username));
-      dmUsersList.appendChild(item);
-    });
-  }
-
-  function openDM(userId, username) {
-    currentDM = { userId, username };
-    dmUsernameEl.textContent = username;
-    dmChat.classList.remove('hidden');
-    dmUsersList.classList.add('hidden');
-    sentDMMessages.clear();
-    socket.emit('getDMHistory', { userId });
-  }
-
-  function addDMMessage(data) {
-    if (!dmMessagesEl) return;
-    
-    if (data.id && sentDMMessages.has(data.id)) {
-      return;
-    }
-    if (data.id) sentDMMessages.add(data.id);
-    
-    const msgEl = document.createElement('div');
-    msgEl.className = 'message';
-    if (data.from === mySocketId) {
-      msgEl.classList.add('self');
-      msgEl.style.borderColor = 'var(--pixel-accent)';
-    }
-    
-    msgEl.innerHTML = `
-      <span class="meta"><span class="username">${escapeHtml(data.fromUsername)}</span><span class="time">[${data.timestamp}]</span></span>
-      <span class="text">${escapeHtml(data.message)}</span>
-    `;
-    
-    dmMessagesEl.appendChild(msgEl);
-    scrollToBottom();
   }
 
   function updateThreadsList() {
@@ -1384,7 +1366,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function scrollToBottom() {
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
-    if (dmMessagesEl) dmMessagesEl.scrollTop = dmMessagesEl.scrollHeight;
     if (threadMessagesEl) threadMessagesEl.scrollTop = threadMessagesEl.scrollHeight;
   }
 
@@ -1424,10 +1405,10 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('🎮 Pixel Chat Ready!');
   console.log('🔌 Socket:', socket.connected ? 'Connected' : 'Disconnected');
   console.log('🧵 Threads: Enabled');
-  console.log('📩 DMs: Enabled');
   console.log('🎵 Soundboard: Enabled');
   console.log('👤 Profiles: Enabled');
   console.log('🛡️ Admin Controls: Enabled');
+  console.log('🤖 Groq Bot: Enabled (use @bot)');
   showServerURL();
   
   if (usernameInput) usernameInput.focus();

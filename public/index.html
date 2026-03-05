@@ -10,16 +10,45 @@
 <body>
   <div class="pixel-container">
     
-    <!-- START MENU -->
+    <!-- START MENU (Improved) -->
     <div id="start-screen" class="screen active">
-      <h1 class="pixel-title">PIXEL CHAT</h1>
-      <div class="pixel-box start-menu">
-        <button id="join-room-btn" class="pixel-btn">🚪 JOIN ROOM</button>
-        <button id="host-room-btn" class="pixel-btn">🏠 HOST ROOM</button>
-        <button id="customize-btn" class="pixel-btn">🎨 CUSTOMIZE</button>
+      <div class="start-menu-header">
+        <h1 class="pixel-title glitch" data-text="PIXEL CHAT">PIXEL CHAT</h1>
+        <div class="floating-pixels">
+          <span class="pixel-float">👾</span>
+          <span class="pixel-float">🎮</span>
+          <span class="pixel-float">🕹️</span>
+        </div>
       </div>
-      <p class="pixel-hint">Choose your adventure!</p>
-      <p class="pixel-hint" id="server-url"></p>
+      
+      <div class="pixel-box start-menu">
+        <button id="join-room-btn" class="pixel-btn rounded">
+          <span class="btn-icon">🚪</span>
+          <span class="btn-text">JOIN ROOM</span>
+        </button>
+        <button id="host-room-btn" class="pixel-btn rounded">
+          <span class="btn-icon">🏠</span>
+          <span class="btn-text">HOST ROOM</span>
+        </button>
+        <button id="open-dms-btn" class="pixel-btn rounded">
+          <span class="btn-icon">📩</span>
+          <span class="btn-text">MY DMS</span>
+        </button>
+        <button id="customize-btn" class="pixel-btn rounded">
+          <span class="btn-icon">🎨</span>
+          <span class="btn-text">CUSTOMIZE</span>
+        </button>
+      </div>
+      
+      <div class="start-menu-footer">
+        <p class="pixel-hint">Choose your adventure!</p>
+        <p class="pixel-hint" id="server-url"></p>
+        <div class="animated-decoration">
+          <span class="deco-pixel">◆</span>
+          <span class="deco-pixel">◆</span>
+          <span class="deco-pixel">◆</span>
+        </div>
+      </div>
     </div>
 
     <!-- ROOM SCREEN -->
@@ -28,8 +57,8 @@
       <div class="pixel-box">
         <input type="text" id="username-input" placeholder="ENTER NAME..." maxlength="12" autocomplete="off"/>
         <input type="text" id="room-input" placeholder="ROOM CODE..." maxlength="16" autocomplete="off"/>
-        <button id="enter-room-btn" class="pixel-btn">▶ ENTER</button>
-        <button id="back-to-start-btn" class="pixel-btn">↩ BACK</button>
+        <button id="enter-room-btn" class="pixel-btn rounded">▶ ENTER</button>
+        <button id="back-to-start-btn" class="pixel-btn rounded">↩ BACK</button>
       </div>
       <p class="pixel-hint">Press ENTER to join</p>
     </div>
@@ -65,9 +94,9 @@
         <div class="customize-section">
           <h3 class="pixel-label">BACKGROUND IMAGE</h3>
           <input type="text" id="bg-image-url" placeholder="Paste image URL..." />
-          <label for="bg-image-upload" class="pixel-btn small">📁 UPLOAD IMAGE</label>
+          <label for="bg-image-upload" class="pixel-btn small rounded">📁 UPLOAD IMAGE</label>
           <input type="file" id="bg-image-upload" accept="image/*" hidden />
-          <button id="clear-bg-image-btn" class="pixel-btn small">🗑️ CLEAR</button>
+          <button id="clear-bg-image-btn" class="pixel-btn small rounded">🗑️ CLEAR</button>
           <div class="color-preview" id="bg-image-preview"></div>
         </div>
         
@@ -101,9 +130,15 @@
           <span>Display user avatars in chat</span>
         </div>
         
-        <button id="save-colors-btn" class="pixel-btn">💾 SAVE</button>
-        <button id="reset-colors-btn" class="pixel-btn">🔄 RESET</button>
-        <button id="back-to-start-customize-btn" class="pixel-btn">↩ BACK</button>
+        <div class="customize-section">
+          <h3 class="pixel-label">GROQ API KEY (for @bot)</h3>
+          <input type="password" id="groq-api-key" placeholder="Enter your Groq API key..." />
+          <p class="pixel-hint" style="font-size: 6px;">Get one at: https://console.groq.com</p>
+        </div>
+        
+        <button id="save-colors-btn" class="pixel-btn rounded">💾 SAVE</button>
+        <button id="reset-colors-btn" class="pixel-btn rounded">🔄 RESET</button>
+        <button id="back-to-start-customize-btn" class="pixel-btn rounded">↩ BACK</button>
       </div>
     </div>
 
@@ -112,10 +147,10 @@
       <div class="chat-header">
         <h2 class="pixel-subtitle">ROOM: <span id="room-display">---</span></h2>
         <div class="header-actions">
-          <button id="soundboard-btn" class="pixel-btn small" title="Soundboard">🎵</button>
-          <button id="sound-toggle" class="pixel-btn small" title="Toggle Sound">🔊</button>
+          <button id="soundboard-btn" class="pixel-btn small rounded" title="Soundboard">🎵</button>
+          <button id="sound-toggle" class="pixel-btn small rounded" title="Toggle Sound">🔊</button>
           <span id="typing-indicator" class="typing-indicator hidden"></span>
-          <button id="leave-btn" class="pixel-btn small">✕ LEAVE</button>
+          <button id="leave-btn" class="pixel-btn small rounded">✕ LEAVE</button>
         </div>
       </div>
       
@@ -123,9 +158,8 @@
         <!-- Main Chat Area -->
         <div class="main-chat">
           <div class="chat-tabs">
-            <button class="tab-btn active" data-tab="main">💬 MAIN</button>
-            <button class="tab-btn hidden" data-tab="threads" id="threads-tab">🧵 THREADS</button>
-            <button class="tab-btn" data-tab="dms">📩 DMS</button>
+            <button class="tab-btn active rounded" data-tab="main">💬 MAIN</button>
+            <button class="tab-btn rounded hidden" data-tab="threads" id="threads-tab">🧵 THREADS</button>
           </div>
           
           <!-- Main Chat -->
@@ -133,15 +167,15 @@
             <div id="messages" class="pixel-messages"></div>
             <div id="reply-preview" class="reply-preview hidden">
               <span>REPLYING TO: <strong id="reply-username"></strong></span>
-              <button id="cancel-reply" class="pixel-btn tiny">✕</button>
+              <button id="cancel-reply" class="pixel-btn tiny rounded">✕</button>
             </div>
             <div class="input-area">
-              <label for="image-upload" class="pixel-btn icon-btn" title="Upload">🖼️</label>
+              <label for="image-upload" class="pixel-btn icon-btn rounded" title="Upload">🖼️</label>
               <input type="file" id="image-upload" accept="image/*" hidden />
-              <input type="text" id="message-input" placeholder="TYPE MESSAGE..." maxlength="500"/>
-              <button id="send-btn" class="pixel-btn">▶ SEND</button>
+              <input type="text" id="message-input" placeholder="TYPE MESSAGE... (@bot for AI)" maxlength="500"/>
+              <button id="send-btn" class="pixel-btn rounded">▶ SEND</button>
             </div>
-            <p class="pixel-hint">*italic* **bold** ***both*** | Double-click to reply</p>
+            <p class="pixel-hint">*italic* **bold** ***both*** | Double-click to reply | @bot for AI</p>
           </div>
           
           <!-- Threads Panel -->
@@ -149,29 +183,13 @@
             <div id="threads-list" class="threads-list"></div>
             <div id="thread-view" class="thread-view hidden">
               <div class="thread-header">
-                <button id="close-thread-btn" class="pixel-btn small">← BACK</button>
+                <button id="close-thread-btn" class="pixel-btn small rounded">← BACK</button>
                 <h3 id="thread-name" class="thread-name"></h3>
               </div>
               <div id="thread-messages" class="thread-messages"></div>
               <div class="thread-input">
                 <input type="text" id="thread-message-input" placeholder="Reply in thread..."/>
-                <button id="send-thread-btn" class="pixel-btn small">SEND</button>
-              </div>
-            </div>
-          </div>
-          
-          <!-- DMs Panel -->
-          <div id="dms-panel" class="chat-panel">
-            <div id="dm-users-list" class="dm-users-list"></div>
-            <div id="dm-chat" class="dm-chat hidden">
-              <div class="dm-header">
-                <button id="close-dm-btn" class="pixel-btn small">← BACK</button>
-                <h3 id="dm-username" class="dm-username"></h3>
-              </div>
-              <div id="dm-messages" class="dm-messages"></div>
-              <div class="dm-input">
-                <input type="text" id="dm-message-input" placeholder="Send private message..."/>
-                <button id="send-dm-btn" class="pixel-btn small">SEND</button>
+                <button id="send-thread-btn" class="pixel-btn small rounded">SEND</button>
               </div>
             </div>
           </div>
@@ -188,12 +206,12 @@
           <div id="soundboard-panel" class="soundboard-panel hidden">
             <h3 class="pixel-label">🎵 SOUNDBOARD</h3>
             <div class="sound-buttons">
-              <button class="sound-btn" data-sound="airhorn">📯</button>
-              <button class="sound-btn" data-sound="bruh">😒</button>
-              <button class="sound-btn" data-sound="wow">😮</button>
-              <button class="sound-btn" data-sound="laugh">😂</button>
-              <button class="sound-btn" data-sound="clap">👏</button>
-              <button class="sound-btn" data-sound="sad">😢</button>
+              <button class="sound-btn rounded" data-sound="airhorn">📯</button>
+              <button class="sound-btn rounded" data-sound="bruh">😒</button>
+              <button class="sound-btn rounded" data-sound="wow">😮</button>
+              <button class="sound-btn rounded" data-sound="laugh">😂</button>
+              <button class="sound-btn rounded" data-sound="clap">👏</button>
+              <button class="sound-btn rounded" data-sound="sad">😢</button>
             </div>
           </div>
         </div>
@@ -207,7 +225,7 @@
     <div class="modal-content glass-panel">
       <div class="modal-header">
         <h2 id="profile-username" class="pixel-title">USERNAME</h2>
-        <button id="close-profile-btn" class="pixel-btn small">✕</button>
+        <button id="close-profile-btn" class="pixel-btn small rounded">✕</button>
       </div>
       
       <div class="profile-content">
@@ -235,37 +253,46 @@
           </div>
         </div>
         
-        <!-- Owner Controls -->
         <div id="owner-controls" class="owner-controls hidden">
           <h3 class="pixel-label">👑 OWNER CONTROLS</h3>
-          <button id="set-mod-btn" class="pixel-btn small">⭐ Make Moderator</button>
-          <button id="kick-btn" class="pixel-btn small danger">👢 Kick</button>
-          <button id="ban-btn" class="pixel-btn small danger">🚫 Ban</button>
-          <button id="unban-btn" class="pixel-btn small hidden">✅ Unban</button>
+          <button id="set-mod-btn" class="pixel-btn small rounded">⭐ Make Moderator</button>
+          <button id="kick-btn" class="pixel-btn small rounded danger">👢 Kick</button>
+          <button id="ban-btn" class="pixel-btn small rounded danger">🚫 Ban</button>
+          <button id="unban-btn" class="pixel-btn small rounded hidden">✅ Unban</button>
         </div>
         
-        <!-- Moderator Controls -->
         <div id="mod-controls" class="mod-controls hidden">
           <h3 class="pixel-label">🛡️ MODERATOR CONTROLS</h3>
-          <button id="mod-kick-btn" class="pixel-btn small danger">👢 Kick</button>
+          <button id="mod-kick-btn" class="pixel-btn small rounded danger">👢 Kick</button>
+        </div>
+        
+        <div class="dm-actions">
+          <button id="open-dm-from-profile-btn" class="pixel-btn rounded">📩 Open DM</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ROOM CONTROLS MODAL (Owner Only) -->
+  <!-- ROOM CONTROLS MODAL -->
   <div id="room-controls-modal" class="modal hidden">
     <div class="modal-content glass-panel">
       <div class="modal-header">
         <h2 class="pixel-title">👑 ROOM CONTROLS</h2>
-        <button id="close-room-controls-btn" class="pixel-btn small">✕</button>
+        <button id="close-room-controls-btn" class="pixel-btn small rounded">✕</button>
       </div>
       
       <div class="profile-content">
-        <button id="delete-room-btn" class="pixel-btn danger">🗑️ DELETE ROOM</button>
-        <button id="view-banned-btn" class="pixel-btn">🚫 View Banned Users</button>
+        <button id="delete-room-btn" class="pixel-btn rounded danger">🗑️ DELETE ROOM</button>
+        <button id="view-banned-btn" class="pixel-btn rounded">🚫 View Banned Users</button>
       </div>
     </div>
+  </div>
+
+  <!-- CONTEXT MENU (Right-click) -->
+  <div id="context-menu" class="context-menu hidden">
+    <div class="context-item" data-action="profile">👤 View Profile</div>
+    <div class="context-item" data-action="dm">📩 Open DM</div>
+    <div class="context-item" data-action="mention">@ Mention</div>
   </div>
 
   <script>
