@@ -306,11 +306,30 @@ document.addEventListener('DOMContentLoaded', () => {
     selectedUser = null;
   }
 
+  function closeRoomControlsModal() {
+    if (roomControlsModal) roomControlsModal.classList.add('hidden');
+  }
+
+  function openDM(userId, username) {
+    // Request DM history and show a simple DM panel
+    socket.emit('getDMHistory', { userId });
+    addSystemMessage(`📩 Opening DM with ${username}... (DM history loaded in console)`);
+    socket.once('dmHistory', ({ messages }) => {
+      if (messages.length === 0) {
+        addSystemMessage(`📩 No DM history with ${username} yet. Send them a message!`);
+      } else {
+        messages.forEach(msg => {
+          addSystemMessage(`📩 [DM] ${msg.fromUsername}: ${msg.message}`);
+        });
+      }
+    });
+  }
+
   // ===== START MENU =====
   if (joinRoomBtn) {
     joinRoomBtn.addEventListener('click', () => {
       initAudio();
-      roomTitle.textContent = 'JOIN ROOM';
+      if (roomTitle) roomTitle.textContent = 'JOIN ROOM';
       showScreen(roomScreen);
       usernameInput?.focus();
     });
@@ -319,7 +338,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (hostRoomBtn) {
     hostRoomBtn.addEventListener('click', () => {
       initAudio();
-      roomTitle.textContent = 'HOST ROOM';
+      if (roomTitle) roomTitle.textContent = 'HOST ROOM';
       showScreen(roomScreen);
       usernameInput?.focus();
     });
@@ -382,16 +401,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const username = usernameInput?.value.trim().toUpperCase() || 'GUEST' + Math.floor(Math.random()*999);
     const room = roomInput?.value.trim().toUpperCase() || 'LOBBY';
     
-    if (username.length < 2) { alert('NAME TOO SHORT!'); return; }
-    if (room.length < 2) { alert('ROOM CODE TOO SHORT!'); return; }
+    if (username.length < 2) { showInlineError('NAME TOO SHORT!'); return; }
+    if (room.length < 2) { showInlineError('ROOM CODE TOO SHORT!'); return; }
     
     myUsername = username;
     currentRoom = room;
-    isHost = roomTitle.textContent.includes('HOST');
+    isHost = roomTitle ? roomTitle.textContent.includes('HOST') : false;
     
     socket.emit('joinRoom', { roomName: room, username, isHost, avatar: myAvatar });
     playSystemSound('join');
     showServerURL();
+  }
+
+  function showInlineError(msg) {
+    let errEl = document.getElementById('inline-error');
+    if (!errEl) {
+      errEl = document.createElement('p');
+      errEl.id = 'inline-error';
+      errEl.style.cssText = 'color:#e94560;font-family:inherit;font-size:8px;margin-top:8px;text-align:center;';
+      const box = document.querySelector('#room-screen .pixel-box');
+      if (box) box.appendChild(errEl);
+    }
+    errEl.textContent = '⚠️ ' + msg;
+    setTimeout(() => { if (errEl) errEl.textContent = ''; }, 3000);
   }
 
   // ===== CUSTOMIZE =====
@@ -967,7 +999,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ===== CONTEXT MENU (Right-click on user) =====
   document.addEventListener('contextmenu', (e) => {
     const userEl = e.target.closest('.pixel-list li');
-    if (userEl && currentRoom) {
+    if (userEl && currentRoom && contextMenu) {
       e.preventDefault();
       const userId = userEl.dataset.userId;
       const username = userEl.querySelector('.username-text')?.textContent;
@@ -988,8 +1020,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (action === 'dm') {
               openDM(userId, username);
             } else if (action === 'mention') {
-              messageInput.value += `@${username} `;
-              messageInput.focus();
+              if (messageInput) { messageInput.value += `@${username} `; messageInput.focus(); }
             }
             contextMenu.classList.add('hidden');
           };
@@ -1000,7 +1031,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Hide context menu on click elsewhere
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.context-menu') && !e.target.closest('.pixel-list li')) {
+    if (contextMenu && !e.target.closest('.context-menu') && !e.target.closest('.pixel-list li')) {
       contextMenu.classList.add('hidden');
     }
   });
