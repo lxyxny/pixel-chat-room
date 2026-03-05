@@ -249,11 +249,17 @@ document.addEventListener('DOMContentLoaded', () => {
   function showPanel(panelId) {
     document.querySelectorAll('.chat-panel').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    
+
     const panel = document.getElementById(panelId);
-    const tab = document.querySelector(`[data-tab="${panelId.replace('-panel', '')}"]`);
-    
     if (panel) panel.classList.add('active');
+
+    // Map panel IDs to their data-tab values
+    const panelToTab = {
+      'main-chat-panel': 'main',
+      'threads-panel': 'threads'
+    };
+    const tabName = panelToTab[panelId] || panelId.replace('-panel', '');
+    const tab = document.querySelector(`[data-tab="${tabName}"]`);
     if (tab) tab.classList.add('active');
   }
 
@@ -631,12 +637,19 @@ document.addEventListener('DOMContentLoaded', () => {
     backToStartCustomizeBtn.addEventListener('click', () => showScreen(startScreen));
   }
 
-  // ===== TABS - ✅ FIXED: Main chat always shows when switching =====
+  // Map tab names to their actual panel element IDs
+  const tabToPanelId = {
+    'main': 'main-chat-panel',
+    'threads': 'threads-panel'
+  };
+
+  // ===== TABS =====
   tabBtns.forEach(tab => {
     tab.addEventListener('click', () => {
       const tabName = tab.dataset.tab;
-      showPanel(`${tabName}-panel`);
-      
+      const panelId = tabToPanelId[tabName] || `${tabName}-panel`;
+      showPanel(panelId);
+
       if (tabName !== 'threads') {
         if (threadView) threadView.classList.add('hidden');
         if (threadsList) threadsList.classList.remove('hidden');

@@ -97,6 +97,14 @@ body::before {
 .screen { display: none; animation: fadeIn 0.5s ease; }
 .screen.active { display: block; }
 
+#chat-screen.active {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 80px);
+  max-height: 900px;
+  min-height: 400px;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
@@ -383,7 +391,9 @@ input[type="checkbox"] {
   display: grid;
   grid-template-columns: 1fr 250px;
   gap: calc(var(--pixel-size) * 3);
-  height: 70vh;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 @media (max-width: 900px) {
@@ -430,6 +440,7 @@ input[type="checkbox"] {
 .chat-panel {
   display: none;
   height: 100%;
+  min-height: 0;
   flex-direction: column;
 }
 
@@ -441,11 +452,13 @@ input[type="checkbox"] {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
 }
 
 .pixel-messages {
   flex: 1;
-  overflow-y: auto;
+  min-height: 0;
+  overflow-y: scroll;
   background: rgba(0,0,0,0.2);
   border: 2px solid var(--pixel-border);
   padding: calc(var(--pixel-size) * 2);
@@ -457,12 +470,15 @@ input[type="checkbox"] {
   border-radius: 8px;
 }
 
-.pixel-messages::-webkit-scrollbar { width: 8px; }
+.pixel-messages::-webkit-scrollbar { width: 10px; }
 .pixel-messages::-webkit-scrollbar-track { background: var(--pixel-bg); }
-.pixel-messages::-webkit-scrollbar-thumb { 
-  background: var(--pixel-border); 
+.pixel-messages::-webkit-scrollbar-thumb {
+  background: var(--pixel-accent);
   border: 2px solid var(--pixel-bg);
   border-radius: 4px;
+}
+.pixel-messages::-webkit-scrollbar-thumb:hover {
+  background: #ff6b85;
 }
 
 .message {
