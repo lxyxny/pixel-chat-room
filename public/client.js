@@ -847,7 +847,7 @@ document.addEventListener('DOMContentLoaded', () => {
             body: JSON.stringify({
               model: 'llama-3.1-8b-instant',
               messages: [
-                { role: 'system', content: 'You are a helpful chatbot in a pixel art chat room. Keep responses short and friendly.' },
+                { role: 'system', content: botPersonas[botPersona] || botPersonas.helpful },
                 { role: 'user', content: botMessage }
               ],
               max_tokens: 150
@@ -1380,6 +1380,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function addMessage(data, isSelf) {
     if (!messagesEl) return;
+    // Silently drop messages from muted users (but never mute self)
+    if (!isSelf && data.username && mutedUsers.has(data.username.toUpperCase())) return;
     
     const msgEl = document.createElement('div');
     msgEl.className = 'message new';
