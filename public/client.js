@@ -365,16 +365,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const isSelf = msg.from === mySocketId || msg.fromUsername === myUsername;
     const el = document.createElement('div');
     el.className = 'message' + (isSelf ? ' self' : '');
-    el.innerHTML = \`
+    el.innerHTML = `
       <div class="avatar"><div class="avatar-placeholder">👤</div></div>
       <div class="content">
         <span class="meta">
-          <span class="username">\${escapeHtml(msg.fromUsername)}</span>
-          <span class="time">[\${msg.timestamp || ''}]</span>
+          <span class="username">${escapeHtml(msg.fromUsername)}</span>
+          <span class="time">[${msg.timestamp || ''}]</span>
         </span>
-        <span class="text">\${parseMarkdown(escapeHtml(msg.message))}</span>
+        <span class="text">${parseMarkdown(escapeHtml(msg.message))}</span>
       </div>
-    \`;
+    `;
     dmMessages.appendChild(el);
     dmMessages.scrollTop = dmMessages.scrollHeight;
   }
@@ -394,13 +394,13 @@ document.addEventListener('DOMContentLoaded', () => {
         : lastMsg.fromUsername;
       const entry = document.createElement('div');
       entry.className = 'dm-entry';
-      entry.innerHTML = \`
+      entry.innerHTML = `
         <div style="width:32px;height:32px;border-radius:50%;background:var(--pixel-border);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">👤</div>
         <div style="flex:1;min-width:0;">
-          <div class="dm-name">\${escapeHtml(otherUser)}</div>
-          <div style="font-size:7px;color:var(--pixel-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">\${escapeHtml(lastMsg.message.substring(0,40))}</div>
+          <div class="dm-name">${escapeHtml(otherUser)}</div>
+          <div style="font-size:7px;color:var(--pixel-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(lastMsg.message.substring(0,40))}</div>
         </div>
-      \`;
+      `;
       entry.addEventListener('click', () => openDM(userId, otherUser));
       dmList.appendChild(entry);
     });
