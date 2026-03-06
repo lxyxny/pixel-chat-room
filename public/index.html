@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>🎮 Pixel Chat</title>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=202603060953" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 </head>
 <body>
@@ -153,6 +153,7 @@
           <span id="typing-indicator" class="typing-indicator hidden"></span>
           <button id="soundboard-btn" class="pixel-btn small rounded" title="Soundboard">🎵</button>
           <button id="sound-toggle" class="pixel-btn small rounded" title="Toggle Sound">🔊</button>
+          <button id="minigame-btn" class="pixel-btn small rounded" title="Minigames" style="display:none;">🎮</button>
           <button id="leave-btn" class="pixel-btn small rounded">✕ LEAVE</button>
         </div>
       </div>
@@ -318,6 +319,18 @@
     <div class="context-item" data-action="mention">@ Mention</div>
   </div>
 
+
+  <!-- MINIGAME MODAL -->
+  <div id="minigame-modal" class="modal hidden">
+    <div class="modal-content glass-panel" style="max-width:420px;max-height:85vh;overflow-y:auto;">
+      <div class="modal-header">
+        <h2 class="pixel-title" style="font-size:10px;">🎮 MINIGAME</h2>
+        <button id="close-minigame-btn" class="pixel-btn small rounded">✕</button>
+      </div>
+      <div id="minigame-body" style="padding:12px;"></div>
+    </div>
+  </div>
+
   <script>
     const savedColors = localStorage.getItem('pixelChatColors');
     if (savedColors) {
@@ -372,6 +385,6 @@
   </script>
   
   <script src="/socket.io/socket.io.js"></script>
-  <script src="client.js"></script>
+  <script src="client.js?v=202603060953"></script>
 </body>
 </html>
