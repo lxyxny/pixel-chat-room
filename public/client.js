@@ -753,278 +753,581 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('minigame-modal')?.classList.add('hidden');
   });
 
+  function mgModal() { return document.getElementById('minigame-modal'); }
+  function mgBody()  { return document.getElementById('minigame-body'); }
+
   function showMinigameLobby() {
-    const modal = document.getElementById('minigame-modal');
-    const body  = document.getElementById('minigame-body');
-    if (!modal || !body) return;
-    body.innerHTML = `
+    if (!mgModal() || !mgBody()) return;
+    mgBody().innerHTML = `
       <h3 style="text-align:center;margin-bottom:20px;font-size:10px;color:var(--pixel-accent);">🎮 CHOOSE A MINIGAME</h3>
       <div style="display:flex;flex-direction:column;gap:10px;">
-        <button class="pixel-btn rounded mg-pick" data-game="football">⚽ Football (6 players)</button>
-        <button class="pixel-btn rounded mg-pick" data-game="quiz">📚 Quiz — First to answer wins</button>
-        <button class="pixel-btn rounded mg-pick" data-game="skribbl">🎨 Skribbl — Draw &amp; Guess</button>
+        <button class="pixel-btn rounded mg-pick" data-game="football" style="padding:14px 12px;">
+          ⚽ <strong>FOOTBALL</strong><br/>
+          <span style="font-size:7px;opacity:0.8;">2-6 players · simulated match with halftime &amp; penalties</span>
+        </button>
+        <button class="pixel-btn rounded mg-pick" data-game="quiz" style="padding:14px 12px;">
+          📚 <strong>QUIZ BATTLE</strong><br/>
+          <span style="font-size:7px;opacity:0.8;">1+ players · 10 questions · timer bar · streaks · categories</span>
+        </button>
+        <button class="pixel-btn rounded mg-pick" data-game="skribbl" style="padding:14px 12px;">
+          🎨 <strong>SKRIBBL</strong><br/>
+          <span style="font-size:7px;opacity:0.8;">2+ players · draw &amp; guess · colour palette · word choices</span>
+        </button>
       </div>
-      <p class="pixel-hint" style="margin-top:16px;">After starting: players type <b>!join</b> in chat, then you type <b>!start</b></p>`;
-    modal.classList.remove('hidden');
-    body.querySelectorAll('.mg-pick').forEach(btn => btn.addEventListener('click', () => {
+      <p class="pixel-hint" style="margin-top:14px;text-align:center;">Players type <b>!join</b> in chat, host types <b>!start</b></p>`;
+    mgModal().classList.remove('hidden');
+    mgBody().querySelectorAll('.mg-pick').forEach(btn => btn.addEventListener('click', () => {
       pickMinigame(btn.dataset.game);
-      modal.classList.add('hidden');
+      mgModal().classList.add('hidden');
     }));
   }
 
   function pickMinigame(type) {
-    activeGame = { type, state:'lobby', players:[myUsername], scores:{} };
-    activeGame.scores[myUsername] = 0;
-    addSystemMessage('🎮 Minigame: ' + type.toUpperCase() + ' — players type !join to enter, host types !start to begin!');
-    socket.emit('chatMessage',{roomName:currentRoom,username:myUsername,message:'🎮 Starting ' + type + '! Type !join to play, then host types !start.',avatar:myAvatar});
-    if (type === 'football') initFootball();
-    else if (type === 'quiz') initQuiz();
-    else if (type === 'skribbl') initSkribbl();
-  }
-
-  function mgLog(msg) {
-    addSystemMessage(msg);
-    const log = document.getElementById('mg-log');
-    if (log) { const d=document.createElement('div'); d.textContent=msg; log.appendChild(d); log.scrollTop=log.scrollHeight; }
+    activeGame = { type, state:'lobby', players:[myUsername], scores:{}, streaks:{} };
+    activeGame.scores[myUsername]  = 0;
+    activeGame.streaks[myUsername] = 0;
+    addSystemMessage('🎮 ' + type.toUpperCase() + ' starting — type !join to enter, host types !start!');
+    socket.emit('chatMessage',{roomName:currentRoom,username:myUsername,message:'🎮 Minigame: '+type+'! Type !join to play, host types !start.',avatar:myAvatar});
+    if (type==='football') initFootball();
+    else if (type==='quiz')    initQuiz();
+    else if (type==='skribbl') initSkribbl();
+    mgModal().classList.remove('hidden');
   }
 
   function startGameRound() {
     if (!activeGame) return;
-    activeGame.state = 'playing';
-    if (activeGame.type === 'football') runFootball();
-    else if (activeGame.type === 'quiz') runQuiz();
-    else if (activeGame.type === 'skribbl') runSkribbl();
+    if (activeGame.type==='football') runFootball();
+    else if (activeGame.type==='quiz')    runQuiz();
+    else if (activeGame.type==='skribbl') runSkribbl();
   }
 
-  // --- FOOTBALL ---
-  function initFootball() {
-    showMinigamePanel(`
-      <h3 style="margin-bottom:12px;">⚽ FOOTBALL</h3>
-      <p id="mg-joined">Players: ${myUsername}</p>
-      <p class="pixel-hint">Others type !join • You type !start when ready (min 2)</p>
-      <div id="mg-log" class="mg-log"></div>`);
-  }
-
-  function runFootball() {
-    if (!activeGame || activeGame.players.length < 2) { addSystemMessage('⚠️ Need at least 2 players to start.'); activeGame.state='lobby'; return; }
-    const mid = Math.ceil(activeGame.players.length/2);
-    activeGame.teamA = activeGame.players.slice(0, mid);
-    activeGame.teamB = activeGame.players.slice(mid);
-    activeGame.score = {A:0, B:0};
-    activeGame.round = 0;
-    activeGame.maxRounds = 6;
-    mgLog('⚽ KICK OFF!  Team A: ' + activeGame.teamA.join(', ') + '  vs  Team B: ' + activeGame.teamB.join(', '));
-    footballTick();
-  }
-
-  function footballTick() {
-    if (!activeGame || activeGame.type !== 'football') return;
-    activeGame.round++;
-    if (activeGame.round > activeGame.maxRounds) { endFootball(); return; }
-    setTimeout(() => {
-      const isA    = Math.random() < 0.5;
-      const team   = isA ? activeGame.teamA : activeGame.teamB;
-      const key    = isA ? 'A' : 'B';
-      const player = team[Math.floor(Math.random()*team.length)];
-      const actions = ['dribbles and shoots!','volleys from distance!','heads it in!','curls it round the keeper!','taps it home!'];
-      const action  = actions[Math.floor(Math.random()*actions.length)];
-      if (Math.random() > 0.42) {
-        activeGame.score[key]++;
-        mgLog('⚽ GOAL! ' + player + ' ' + action + '  Score: A ' + activeGame.score.A + ' — ' + activeGame.score.B + ' B');
-      } else {
-        mgLog('🛡️ ' + player + ' ' + action + ' — saved!');
-      }
-      footballTick();
-    }, 1400);
-  }
-
-  function endFootball() {
-    const { A, B } = activeGame.score;
-    const result = A>B ? 'Team A wins! 🏆' : B>A ? 'Team B wins! 🏆' : 'It\'s a draw! 🤝';
-    mgLog('🏁 FULL TIME! ' + result + '  Final: A ' + A + ' — ' + B + ' B');
-    activeGame = null;
-  }
-
-  // --- QUIZ ---
-  const QUIZ_POOL = [
-    {q:'What is 7 × 8?',              a:'56'},
-    {q:'Capital of France?',           a:'paris'},
-    {q:'Sides on a hexagon?',          a:'6'},
-    {q:'Gas plants absorb?',           a:'co2'},
-    {q:'Who wrote Romeo and Juliet?',  a:'shakespeare'},
-    {q:'Largest planet?',              a:'jupiter'},
-    {q:'Bones in the human body?',     a:'206'},
-    {q:'WW2 ended in what year?',      a:'1945'},
-    {q:'Chemical symbol for gold?',    a:'au'},
-    {q:'Speed of light (km/s, approx)?', a:'300000'},
-    {q:'What planet is closest to the Sun?', a:'mercury'},
-    {q:'How many continents are there?', a:'7'},
-  ];
-
-  function initQuiz() {
-    activeGame.questions = [...QUIZ_POOL].sort(()=>Math.random()-.5).slice(0,6);
-    activeGame.qIdx = 0;
-    activeGame.answered = false;
-    activeGame.players.forEach(p => { activeGame.scores[p]=0; });
-    showMinigamePanel(`
-      <h3 style="margin-bottom:12px;">📚 QUIZ</h3>
-      <p class="pixel-hint">Others type !join • You type !start when ready</p>
-      <div id="mg-log" class="mg-log"></div>`);
-  }
-
-  function runQuiz() {
-    activeGame.players.forEach(p => { if (!activeGame.scores[p]) activeGame.scores[p]=0; });
-    mgLog('📚 QUIZ START! Answer in chat — first correct wins the point!');
-    askQuestion();
-  }
-
-  let quizTimer = null;
-  function askQuestion() {
-    if (!activeGame || activeGame.qIdx >= activeGame.questions.length) { endQuiz(); return; }
-    const q = activeGame.questions[activeGame.qIdx];
-    activeGame.currentAnswer = q.a.toLowerCase().replace(/\s+/g,'');
-    activeGame.answered = false;
-    activeGame.state = 'question';
-    mgLog('❓ Q' + (activeGame.qIdx+1) + ': ' + q.q);
-    clearTimeout(quizTimer);
-    quizTimer = setTimeout(() => {
-      if (!activeGame || activeGame.answered) return;
-      mgLog('⏰ Time\'s up! Answer was: ' + q.a);
-      activeGame.qIdx++;
-      askQuestion();
-    }, 15000);
-  }
-
-  function handleQuizAnswer(username, msg) {
-    if (!activeGame || activeGame.type!=='quiz' || activeGame.answered || activeGame.state!=='question') return;
-    if (msg.toLowerCase().replace(/\s+/g,'') === activeGame.currentAnswer) {
-      clearTimeout(quizTimer);
-      activeGame.answered = true;
-      activeGame.scores[username] = (activeGame.scores[username]||0) + 1;
-      mgLog('✅ ' + username + ' got it! (+1 point)');
-      activeGame.qIdx++;
-      setTimeout(askQuestion, 1200);
+  function mgLog(msg, cls) {
+    addSystemMessage(msg);
+    const log = document.getElementById('mg-log');
+    if (log) {
+      const d = document.createElement('div');
+      d.className = 'mg-event ' + (cls||'system');
+      d.textContent = msg;
+      log.appendChild(d);
+      log.scrollTop = log.scrollHeight;
     }
   }
 
-  function endQuiz() {
-    mgLog('📊 FINAL SCORES:');
-    Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]).forEach(([p,s],i) => mgLog((i===0?'🥇':i===1?'🥈':'🥉')+' '+p+': '+s+' pts'));
-    activeGame = null;
+  function mgUpdateScoreboard() {
+    const board = document.getElementById('mg-scoreboard');
+    if (!board || !activeGame) return;
+    board.innerHTML = '';
+    const sorted = Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]);
+    sorted.forEach(([p,s]) => {
+      const row = document.createElement('div');
+      row.className = 'mg-lb-row';
+      const rank = sorted.indexOf(sorted.find(x=>x[0]===p));
+      const medal = rank===0?'🥇':rank===1?'🥈':rank===2?'🥉':'  ';
+      row.innerHTML = '<span class="mg-lb-rank">'+medal+'</span><span class="mg-lb-name">'+escapeHtml(p)+'</span><span class="mg-lb-pts">'+s+'</span>';
+      board.appendChild(row);
+    });
   }
 
-  // --- SKRIBBL ---
-  const WORD_POOL = ['cat','house','tree','car','sun','pizza','robot','guitar','shark','mountain','banana','rocket','dragon','hat','cloud','sword','castle','spider','rainbow','volcano'];
-  let skribblTimeout = null;
+  // ─── FOOTBALL ───────────────────────────────────────────────
+  const FB_EVENTS = [
+    {w:.25,text:'{p} GOAL! {action}',       cls:'goal',    goal:true},
+    {w:.15,text:'{p} Shot saved! {save}',    cls:'save'},
+    {w:.12,text:'{p} dribbles past two!',    cls:'save'},
+    {w:.08,text:'{p} skies it over the bar.',cls:'save'},
+    {w:.08,text:'Foul on {p}! Yellow card.', cls:'foul',    foul:true},
+    {w:.06,text:'{p} PENALTY awarded!',      cls:'penalty', pen:true},
+    {w:.06,text:'Corner to {team}.',         cls:'save'},
+    {w:.05,text:'Offside! Play stops.',      cls:'system'},
+    {w:.05,text:'{p} brilliant cross, cleared.',cls:'save'},
+    {w:.10,text:'{p} long range effort, just wide.',cls:'save'},
+  ];
+  const FB_GOALS   = ['curls it in the top corner!','taps it home from close range!','thunderous volley!','chips the keeper beautifully!','headers it powerfully!','penalty kick — scores!'];
+  const FB_SAVES   = ['the keeper tips it over!','blocked by the defender!','hits the post!','comfortable save.','cleared off the line!'];
+
+  function weightedPick(arr) {
+    const tot = arr.reduce((s,x)=>s+(x.w||1),0);
+    let r = Math.random()*tot;
+    for (const x of arr) { r -= (x.w||1); if (r<=0) return x; }
+    return arr[arr.length-1];
+  }
+
+  function initFootball() {
+    showGamePanel(`
+      <div class="mg-game-header">
+        <span style="font-size:10px;">⚽ FOOTBALL</span>
+        <span id="mg-matchtime" style="font-size:8px;color:var(--pixel-dim);">Pre-match</span>
+      </div>
+      <div class="mg-score-board" id="mg-fb-scores">
+        <div class="mg-score-card" id="fb-card-a"><div class="score-name" id="fb-name-a">Team A</div><div class="score-val" id="fb-sc-a">0</div></div>
+        <div style="font-size:18px;align-self:center;">—</div>
+        <div class="mg-score-card" id="fb-card-b"><div class="score-name" id="fb-name-b">Team B</div><div class="score-val" id="fb-sc-b">0</div></div>
+      </div>
+      <div class="football-field" id="mg-log" style="height:160px;overflow-y:auto;"></div>
+      <p id="mg-joined" class="pixel-hint" style="margin-top:6px;">Players: <b>${myUsername}</b></p>
+      <p class="pixel-hint">Type !join to enter · Host types !start (min 2)</p>`);
+  }
+
+  function runFootball() {
+    if (!activeGame || activeGame.players.length < 2) { addSystemMessage('⚠️ Need at least 2 players.'); activeGame.state='lobby'; return; }
+    const mid = Math.ceil(activeGame.players.length/2);
+    activeGame.teamA    = activeGame.players.slice(0, mid);
+    activeGame.teamB    = activeGame.players.slice(mid);
+    activeGame.score    = {A:0, B:0};
+    activeGame.minute   = 0;
+    activeGame.cards    = {};
+    activeGame.state    = 'playing';
+    activeGame.half     = 1;
+    const aN = activeGame.teamA.map(p=>p.split('')[0]+'XI').join('/');
+    const bN = activeGame.teamB.map(p=>p.split('')[0]+'XI').join('/');
+    if (document.getElementById('fb-name-a')) document.getElementById('fb-name-a').textContent = activeGame.teamA.join('+');
+    if (document.getElementById('fb-name-b')) document.getElementById('fb-name-b').textContent = activeGame.teamB.join('+');
+    mgLog('🟢 KICK OFF! ' + activeGame.teamA.join(', ') + ' vs ' + activeGame.teamB.join(', '), 'system');
+    scheduleFootballEvent(0);
+  }
+
+  function scheduleFootballEvent(minute) {
+    if (!activeGame || activeGame.type!=='football') return;
+    const delay = 800 + Math.random()*600;
+    setTimeout(()=>footballEvent(minute), delay);
+  }
+
+  function footballEvent(minute) {
+    if (!activeGame || activeGame.type!=='football') return;
+    activeGame.minute = minute;
+    const el = document.getElementById('mg-matchtime');
+    if (el) el.textContent = minute + "'";
+
+    // Halftime at 45
+    if (minute===45 && activeGame.half===1) {
+      activeGame.half = 2;
+      mgLog('--- HALF TIME: A '+activeGame.score.A+' - '+activeGame.score.B+' B ---','system');
+      setTimeout(()=>{ mgLog('--- SECOND HALF BEGINS ---','system'); scheduleFootballEvent(46); }, 2000);
+      return;
+    }
+    if (minute >= 90) { endFootball(); return; }
+
+    const isA  = Math.random() < 0.5;
+    const team = isA ? activeGame.teamA : activeGame.teamB;
+    const key  = isA ? 'A' : 'B';
+    const p    = team[Math.floor(Math.random()*team.length)];
+    const ev   = weightedPick(FB_EVENTS);
+
+    let msg = ev.text.replace('{p}', p).replace('{team}', 'Team '+key)
+      .replace('{action}', FB_GOALS[Math.floor(Math.random()*FB_GOALS.length)])
+      .replace('{save}', FB_SAVES[Math.floor(Math.random()*FB_SAVES.length)]);
+
+    if (ev.goal) {
+      activeGame.score[key]++;
+      if (document.getElementById('fb-sc-'+key.toLowerCase())) document.getElementById('fb-sc-'+key.toLowerCase()).textContent = activeGame.score[key];
+      // Highlight winning team card
+      const cards = document.querySelectorAll('.mg-score-card');
+      cards.forEach(c => c.classList.remove('winning'));
+      if (activeGame.score.A !== activeGame.score.B) {
+        const winner = activeGame.score.A > activeGame.score.B ? 'fb-card-a' : 'fb-card-b';
+        document.getElementById(winner)?.classList.add('winning');
+      }
+    }
+    if (ev.foul) { activeGame.cards[p] = (activeGame.cards[p]||0)+1; if(activeGame.cards[p]>=2){msg+=' '+p+' gets a RED card!';} }
+    if (ev.pen) {
+      // Penalty: 70% chance
+      msg += Math.random()<.7 ? ' → SCORES from the spot!' : ' → Penalty MISSED!';
+      if (msg.includes('SCORES')) { activeGame.score[key]++; if(document.getElementById('fb-sc-'+key.toLowerCase())) document.getElementById('fb-sc-'+key.toLowerCase()).textContent=activeGame.score[key]; }
+    }
+
+    mgLog(minute + "' " + msg, ev.cls);
+    scheduleFootballEvent(minute + 2 + Math.floor(Math.random()*4));
+  }
+
+  function endFootball() {
+    if (!activeGame) return;
+    const {A,B} = activeGame.score;
+    if (A===B) {
+      mgLog('--- FULL TIME: A '+A+' - '+B+' B — DRAW! Going to penalties! ---','system');
+      setTimeout(penaltyShootout, 1500);
+    } else {
+      const winner = A>B ? activeGame.teamA : activeGame.teamB;
+      mgLog('🏁 FULL TIME: A '+A+' - '+B+' B  —  ' + winner.join('+') + ' WIN! 🏆','system');
+      activeGame = null;
+    }
+  }
+
+  function penaltyShootout() {
+    if (!activeGame) return;
+    mgLog('🥅 PENALTY SHOOTOUT begins!','system');
+    let round=0, scA=0, scB=0;
+    const maxRounds=5;
+    function shoot() {
+      if (!activeGame) return;
+      round++;
+      if (round>maxRounds) {
+        if (scA===scB) { mgLog('Still level after 5 each — Sudden Death!','system'); }
+        const wKey = scA>scB?'A':'B';
+        const wTeam= wKey==='A'?activeGame.teamA:activeGame.teamB;
+        mgLog('🏆 Penalty winner: ' + wTeam.join('+') + '! (' + scA + '-' + scB + ')','goal');
+        activeGame=null; return;
+      }
+      const pA = activeGame.teamA[Math.floor(Math.random()*activeGame.teamA.length)];
+      const pB = activeGame.teamB[Math.floor(Math.random()*activeGame.teamB.length)];
+      const gA = Math.random()<.75; const gB = Math.random()<.75;
+      if(gA) scA++; if(gB) scB++;
+      mgLog(round+'. ' + pA+': '+(gA?'✅ SCORES!':'❌ Missed.')+'  '+pB+': '+(gB?'✅ SCORES!':'❌ Missed.')+'  ('+scA+'-'+scB+')', gA||gB?'goal':'save');
+      setTimeout(shoot, 1400);
+    }
+    shoot();
+  }
+
+  // ─── QUIZ ───────────────────────────────────────────────────
+  const QUIZ_POOL = [
+    {q:'What is 7 × 8?',                           a:'56',          cat:'🔢 Maths'},
+    {q:'Capital of France?',                        a:'paris',       cat:'🌍 Geography'},
+    {q:'How many sides on a hexagon?',              a:'6',           cat:'🔢 Maths'},
+    {q:'Gas plants absorb from the air?',           a:'co2',         cat:'🔬 Science'},
+    {q:'Who wrote Romeo and Juliet?',               a:'shakespeare', cat:'📖 Literature'},
+    {q:'Largest planet in the solar system?',       a:'jupiter',     cat:'🔭 Astronomy'},
+    {q:'How many bones in the human body?',         a:'206',         cat:'🔬 Science'},
+    {q:'What year did WW2 end?',                    a:'1945',        cat:'📜 History'},
+    {q:'Chemical symbol for gold?',                 a:'au',          cat:'🔬 Science'},
+    {q:'Planet closest to the Sun?',                a:'mercury',     cat:'🔭 Astronomy'},
+    {q:'How many continents are there?',            a:'7',           cat:'🌍 Geography'},
+    {q:'Who painted the Mona Lisa?',                a:'da vinci',    cat:'🎨 Art'},
+    {q:'What is the square root of 144?',           a:'12',          cat:'🔢 Maths'},
+    {q:'Capital of Japan?',                         a:'tokyo',       cat:'🌍 Geography'},
+    {q:'How many strings on a guitar?',             a:'6',           cat:'🎵 Music'},
+    {q:'What is H2O?',                              a:'water',       cat:'🔬 Science'},
+    {q:'Longest river in the world?',               a:'nile',        cat:'🌍 Geography'},
+    {q:'How many keys on a standard piano?',        a:'88',          cat:'🎵 Music'},
+    {q:'In what year did the Titanic sink?',        a:'1912',        cat:'📜 History'},
+    {q:'Who invented the telephone?',               a:'bell',        cat:'📜 History'},
+    {q:'Speed of sound in air (m/s approx)?',       a:'343',         cat:'🔬 Science'},
+    {q:'What is the powerhouse of the cell?',       a:'mitochondria',cat:'🔬 Science'},
+    {q:'Capital of Australia?',                     a:'canberra',    cat:'🌍 Geography'},
+    {q:'How many players in a rugby union team?',   a:'15',          cat:'⚽ Sport'},
+    {q:'What sport uses a shuttlecock?',            a:'badminton',   cat:'⚽ Sport'},
+  ];
+
+  let quizTimer=null, quizBarTimer=null;
+  const QUIZ_TIME=18;
+
+  function initQuiz() {
+    activeGame.questions=[...QUIZ_POOL].sort(()=>Math.random()-.5).slice(0,10);
+    activeGame.qIdx=0; activeGame.answered=false;
+    activeGame.players.forEach(p=>{activeGame.scores[p]=0;activeGame.streaks[p]=0;});
+    showGamePanel(`
+      <div class="mg-game-header">
+        <span style="font-size:10px;">📚 QUIZ BATTLE</span>
+        <span id="qz-progress" style="font-size:8px;color:var(--pixel-dim);">Q 0/10</span>
+      </div>
+      <div class="mg-timer-bar-wrap"><div class="mg-timer-bar" id="qz-timer-bar" style="width:100%"></div></div>
+      <div id="qz-question" class="mg-question-box" style="min-height:50px;">Waiting to start…</div>
+      <div class="mg-leaderboard" id="mg-scoreboard"></div>
+      <div id="mg-log" class="mg-log" style="max-height:100px;margin-top:8px;"></div>
+      <p class="pixel-hint" style="margin-top:6px;">Type !join to enter · Host types !start</p>`);
+    mgUpdateScoreboard();
+  }
+
+  function runQuiz() {
+    activeGame.players.forEach(p=>{if(!activeGame.scores[p])activeGame.scores[p]=0;if(!activeGame.streaks[p])activeGame.streaks[p]=0;});
+    mgLog('📚 QUIZ START! Answer in chat — first correct gets points!','system');
+    askQuestion();
+  }
+
+  function askQuestion() {
+    if (!activeGame||activeGame.qIdx>=activeGame.questions.length){endQuiz();return;}
+    clearTimeout(quizTimer); clearInterval(quizBarTimer);
+    const q=activeGame.questions[activeGame.qIdx];
+    activeGame.currentAnswer=q.a.toLowerCase().replace(/\s+/g,'');
+    activeGame.answered=false;
+    activeGame.state='question';
+    activeGame.qStart=Date.now();
+    activeGame.qTime=QUIZ_TIME;
+
+    const qEl=document.getElementById('qz-question');
+    const prog=document.getElementById('qz-progress');
+    if (qEl) qEl.innerHTML='<div class="mg-category-badge" style="background:rgba(76,201,240,0.15);border:1px solid #4cc9f0;color:#4cc9f0;">'+q.cat+'</div><br/>'+escapeHtml(q.q);
+    if (prog) prog.textContent='Q '+(activeGame.qIdx+1)+'/'+activeGame.questions.length;
+
+    // Timer bar animation
+    const bar=document.getElementById('qz-timer-bar');
+    if (bar) { bar.style.transition='none'; bar.style.width='100%'; bar.className='mg-timer-bar'; }
+    setTimeout(()=>{
+      if (bar) { bar.style.transition='width '+QUIZ_TIME+'s linear'; bar.style.width='0%'; }
+    },50);
+
+    let remaining=QUIZ_TIME;
+    quizBarTimer=setInterval(()=>{
+      remaining--;
+      if (bar) {
+        if (remaining<=5) bar.className='mg-timer-bar danger';
+        else if (remaining<=9) bar.className='mg-timer-bar warn';
+      }
+      if (remaining<=0) clearInterval(quizBarTimer);
+    },1000);
+
+    quizTimer=setTimeout(()=>{
+      if (!activeGame||activeGame.answered) return;
+      clearInterval(quizBarTimer);
+      mgLog('⏰ Time\'s up! Answer: '+q.a,'system');
+      // Reset streaks
+      activeGame.players.forEach(p=>{activeGame.streaks[p]=0;});
+      activeGame.qIdx++; setTimeout(askQuestion,1800);
+    }, QUIZ_TIME*1000);
+  }
+
+  function handleQuizAnswer(username,msg) {
+    if (!activeGame||activeGame.type!=='quiz'||activeGame.answered||activeGame.state!=='question') return;
+    const norm=msg.toLowerCase().replace(/\s+/g,'');
+    // Allow partial match for long answers (>=5 chars)
+    const ans=activeGame.currentAnswer;
+    const match = norm===ans || (ans.length>=5 && norm.length>=3 && ans.startsWith(norm));
+    if (!match) return;
+    clearTimeout(quizTimer); clearInterval(quizBarTimer);
+    activeGame.answered=true;
+    const elapsed=Math.floor((Date.now()-activeGame.qStart)/1000);
+    const speedBonus=Math.max(0, QUIZ_TIME-elapsed);
+    const streak=(activeGame.streaks[username]||0)+1;
+    activeGame.streaks[username]=streak;
+    const streakBonus=Math.min(streak-1,3);
+    const pts=1+Math.floor(speedBonus/6)+streakBonus;
+    activeGame.scores[username]=(activeGame.scores[username]||0)+pts;
+    let msg2='✅ '+username+' got it! (+'+pts+' pts';
+    if (streakBonus>0) msg2+=' 🔥×'+streak+' streak';
+    msg2+=')';
+    mgLog(msg2,'goal');
+    // Reset everyone else's streak
+    activeGame.players.forEach(p=>{if(p!==username)activeGame.streaks[p]=0;});
+    mgUpdateScoreboard();
+    activeGame.qIdx++;
+    setTimeout(askQuestion,1600);
+  }
+
+  function endQuiz() {
+    if (!activeGame) return;
+    mgLog('━━━━ FINAL SCORES ━━━━','system');
+    Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]).forEach(([p,s],i)=>{
+      mgLog((i===0?'🥇':i===1?'🥈':i===2?'🥉':'  ')+' '+p+': '+s+' pts','system');
+    });
+    activeGame=null;
+  }
+
+  // ─── SKRIBBL ────────────────────────────────────────────────
+  const WORD_CATEGORIES = {
+    animals:  ['cat','dog','shark','elephant','penguin','dragon','spider','jellyfish','crocodile','giraffe'],
+    objects:  ['guitar','telescope','umbrella','scissors','lighthouse','hourglass','compass','lantern','anchor','trophy'],
+    places:   ['volcano','castle','pyramid','igloo','treehouse','submarine','spaceship','windmill','skyscraper','cave'],
+    food:     ['pizza','sushi','burger','taco','waffle','spaghetti','dumpling','pretzel','cupcake','hotdog'],
+    actions:  ['dancing','surfing','climbing','juggling','swimming','sleeping','flying','boxing','fishing','painting'],
+  };
+  let skribblTimeout=null, currentColor='#e94560', currentSize=5, eraserMode=false;
+  const SK_PALETTE=['#e94560','#ff8c00','#ffb700','#4cc9f0','#7bed9f','#ffffff','#a29bfe','#fd79a8','#2d3436','#6c5ce7','#00b894','#fdcb6e'];
 
   function initSkribbl() {
-    activeGame.drawers = [...activeGame.players];
-    activeGame.drawerIdx = 0;
-    activeGame.players.forEach(p => { activeGame.scores[p]=0; });
-    showMinigamePanel(`
-      <h3 style="margin-bottom:12px;">🎨 SKRIBBL</h3>
-      <p class="pixel-hint">Others type !join • You type !start when ready</p>
-      <div id="mg-log" class="mg-log"></div>
-      <canvas id="skribbl-canvas" width="320" height="200" style="display:none;border:2px solid var(--pixel-border);border-radius:8px;background:#fff;cursor:crosshair;touch-action:none;margin-top:10px;width:100%;"></canvas>
-      <div id="skribbl-tools" style="display:none;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap;">
-        <input type="color" id="sk-color" value="#000000" style="width:32px;height:32px;border:none;cursor:pointer;"/>
-        <input type="range"  id="sk-size"  min="2" max="24" value="5" style="width:80px;"/>
+    activeGame.drawers=[...activeGame.players].sort(()=>Math.random()-.5);
+    activeGame.drawerIdx=0;
+    activeGame.players.forEach(p=>{activeGame.scores[p]=0;activeGame.streaks[p]=0;});
+    showGamePanel(`
+      <div class="mg-game-header">
+        <span style="font-size:10px;">🎨 SKRIBBL</span>
+        <span id="sk-progress" style="font-size:8px;color:var(--pixel-dim);">Round 0/${activeGame.drawers.length}</span>
+      </div>
+      <div class="mg-timer-bar-wrap"><div class="mg-timer-bar" id="sk-timer-bar" style="width:100%"></div></div>
+      <div id="sk-word-display" class="mg-word-display"></div>
+      <canvas id="skribbl-canvas" width="400" height="220" style="display:none;border:2px solid var(--pixel-border);border-radius:8px;background:#fff;cursor:crosshair;touch-action:none;width:100%;margin-top:6px;"></canvas>
+      <div id="sk-guesser-hint" style="display:none;text-align:center;padding:8px;font-size:8px;color:var(--pixel-dim);">Guess the word in chat!</div>
+      <div id="sk-tools" class="skribbl-tools-row" style="display:none;">
+        <div class="skribbl-palette" id="sk-palette"></div>
+        <input type="range" id="sk-size-range" min="2" max="28" value="5" style="width:70px;"/>
+        <button class="pixel-btn small rounded" id="sk-eraser" title="Eraser">⬜</button>
         <button class="pixel-btn small rounded" onclick="window.skClear()">🗑️</button>
-        <span id="sk-word" style="font-size:8px;color:var(--pixel-accent);"></span>
-      </div>`);
+        <span id="sk-word-label" style="font-size:8px;color:var(--pixel-accent);margin-left:4px;"></span>
+      </div>
+      <div class="mg-leaderboard" id="mg-scoreboard" style="margin-top:8px;"></div>
+      <div id="mg-log" class="mg-log" style="max-height:80px;margin-top:6px;"></div>
+      <p class="pixel-hint" style="margin-top:6px;">Type !join to enter · Host types !start (min 2)</p>`);
+
+    // Build palette
+    const pal = document.getElementById('sk-palette');
+    if (pal) {
+      SK_PALETTE.forEach(c => {
+        const sw = document.createElement('div');
+        sw.className='sk-color-swatch'+(c===currentColor?' active':'');
+        sw.style.background=c;
+        sw.addEventListener('click',()=>{
+          currentColor=c; eraserMode=false;
+          document.querySelectorAll('.sk-color-swatch').forEach(s=>s.classList.remove('active'));
+          sw.classList.add('active');
+          document.getElementById('sk-eraser')?.classList.remove('active');
+        });
+        pal.appendChild(sw);
+      });
+    }
+    const sizeRange=document.getElementById('sk-size-range');
+    if (sizeRange) sizeRange.addEventListener('input',e=>{currentSize=parseInt(e.target.value);});
+    const eraserBtn=document.getElementById('sk-eraser');
+    if (eraserBtn) eraserBtn.addEventListener('click',()=>{
+      eraserMode=!eraserMode;
+      eraserBtn.classList.toggle('active',eraserMode);
+    });
+    mgUpdateScoreboard();
   }
 
+  const SK_TIME=60;
   function runSkribbl() {
-    activeGame.drawers = [...activeGame.players];
-    activeGame.drawers.sort(()=>Math.random()-.5);
-    activeGame.drawerIdx = 0;
-    activeGame.players.forEach(p => { if(!activeGame.scores[p]) activeGame.scores[p]=0; });
-    mgLog('🎨 SKRIBBL! Guess the drawing in chat. Drawer gets points too!');
+    if (!activeGame||activeGame.players.length<2){addSystemMessage('⚠️ Need at least 2 players.');activeGame.state='lobby';return;}
+    activeGame.players.forEach(p=>{if(!activeGame.scores[p])activeGame.scores[p]=0;});
+    mgLog('🎨 SKRIBBL! Guess in chat. Drawer: draw your word!','system');
     skribblRound();
   }
 
   function skribblRound() {
-    if (!activeGame || activeGame.drawerIdx >= activeGame.drawers.length) { endSkribbl(); return; }
-    const drawer = activeGame.drawers[activeGame.drawerIdx];
-    activeGame.currentWord   = WORD_POOL[Math.floor(Math.random()*WORD_POOL.length)];
-    activeGame.drawerName    = drawer;
-    activeGame.guessed       = false;
-    activeGame.state         = 'drawing';
-    const isMe = drawer === myUsername;
+    if (!activeGame||activeGame.drawerIdx>=activeGame.drawers.length){endSkribbl();return;}
+    clearTimeout(skribblTimeout);
+    const drawer=activeGame.drawers[activeGame.drawerIdx];
+    // Pick word from random category
+    const cats=Object.keys(WORD_CATEGORIES);
+    const cat=cats[Math.floor(Math.random()*cats.length)];
+    const pool=WORD_CATEGORIES[cat];
+    activeGame.currentWord=pool[Math.floor(Math.random()*pool.length)];
+    activeGame.drawerName=drawer;
+    activeGame.guessed=false;
+    activeGame.state='drawing';
+    activeGame.roundStart=Date.now();
+    const isMe=drawer===myUsername;
+    const prog=document.getElementById('sk-progress');
+    if (prog) prog.textContent='Round '+(activeGame.drawerIdx+1)+'/'+activeGame.drawers.length;
 
-    const hint = activeGame.currentWord.split('').map((_,i)=>i===0||i===activeGame.currentWord.length-1 ? activeGame.currentWord[i] : '_').join(' ');
-    mgLog('🖊️ ' + drawer + ' is drawing!  Hint: ' + hint + (isMe ? '  ← Your word: ' + activeGame.currentWord.toUpperCase() : ''));
+    // Word display — blanks for guessers, revealed for drawer
+    renderWordBlanks(activeGame.currentWord, isMe);
+    mgLog('🖊️ ' + drawer + ' is drawing! Category: '+cat,'system');
 
-    const canvas = document.getElementById('skribbl-canvas');
-    const tools  = document.getElementById('skribbl-tools');
-    const wordEl = document.getElementById('sk-word');
+    const canvas=document.getElementById('skribbl-canvas');
+    const tools=document.getElementById('sk-tools');
+    const hint=document.getElementById('sk-guesser-hint');
+    const wordLabel=document.getElementById('sk-word-label');
 
     if (canvas) {
-      canvas.style.display = isMe ? 'block' : 'none';
-      if (isMe) {
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0,0,canvas.width,canvas.height);
-        initCanvas(canvas, ctx);
-      }
+      canvas.style.display=isMe?'block':'none';
+      if (isMe) { const ctx=canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); setupSkribblCanvas(canvas,ctx); }
     }
-    if (tools)  tools.style.display  = isMe ? 'flex' : 'none';
-    if (wordEl && isMe) wordEl.textContent = 'Word: ' + activeGame.currentWord.toUpperCase();
+    if (tools)  tools.style.display=isMe?'flex':'none';
+    if (hint)   hint.style.display=isMe?'none':'block';
+    if (wordLabel&&isMe) wordLabel.textContent='Word: '+activeGame.currentWord.toUpperCase();
 
-    clearTimeout(skribblTimeout);
-    skribblTimeout = setTimeout(() => {
-      if (!activeGame || activeGame.guessed) return;
-      mgLog('⏰ Time\'s up! Word was: ' + activeGame.currentWord);
+    // Timer bar
+    const bar=document.getElementById('sk-timer-bar');
+    if (bar){bar.style.transition='none';bar.style.width='100%';bar.className='mg-timer-bar';}
+    setTimeout(()=>{if(bar){bar.style.transition='width '+SK_TIME+'s linear';bar.style.width='0%';}},50);
+
+    let rem=SK_TIME;
+    const barTick=setInterval(()=>{
+      rem--;
+      if(bar){if(rem<=10)bar.className='mg-timer-bar danger';else if(rem<=20)bar.className='mg-timer-bar warn';}
+      if(rem<=0)clearInterval(barTick);
+    },1000);
+
+    skribblTimeout=setTimeout(()=>{
+      clearInterval(barTick);
+      if(!activeGame||activeGame.guessed)return;
+      mgLog("⏰ Time's up! Word was: "+activeGame.currentWord,'system');
+      revealWord(activeGame.currentWord);
       activeGame.drawerIdx++;
-      if (canvas) canvas.style.display='none';
-      if (tools)  tools.style.display='none';
-      setTimeout(skribblRound, 1500);
-    }, 60000);
+      if(canvas)canvas.style.display='none';
+      if(tools)tools.style.display='none';
+      if(hint)hint.style.display='none';
+      setTimeout(skribblRound,2000);
+    }, SK_TIME*1000);
   }
 
-  function initCanvas(canvas, ctx) {
-    let drawing = false;
-    const pos = e => { const r=canvas.getBoundingClientRect(), src=e.touches?e.touches[0]:e; return {x:(src.clientX-r.left)*(canvas.width/r.width), y:(src.clientY-r.top)*(canvas.height/r.height)}; };
-    canvas.onmousedown = canvas.ontouchstart = e => { drawing=true; const p=pos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); };
-    canvas.onmousemove = canvas.ontouchmove  = e => {
-      if (!drawing) return; e.preventDefault();
-      ctx.strokeStyle = document.getElementById('sk-color')?.value||'#000';
-      ctx.lineWidth   = document.getElementById('sk-size')?.value||5;
+  function renderWordBlanks(word, reveal) {
+    const el=document.getElementById('sk-word-display');
+    if (!el) return;
+    el.innerHTML='';
+    word.split('').forEach(ch=>{
+      const box=document.createElement('div');
+      box.className='mg-letter-box'+(reveal?' revealed':'');
+      box.textContent=reveal?ch.toUpperCase():ch===' '?'⠀':'';
+      if (!reveal&&ch!==' ') box.style.color='transparent';
+      el.appendChild(box);
+    });
+  }
+
+  function revealWord(word) {
+    const boxes=document.querySelectorAll('.mg-letter-box');
+    word.split('').forEach((ch,i)=>{
+      if(boxes[i]){boxes[i].textContent=ch.toUpperCase();boxes[i].classList.add('revealed');boxes[i].style.color='';}
+    });
+  }
+
+  function setupSkribblCanvas(canvas,ctx) {
+    let drawing=false;
+    const pos=e=>{
+      const r=canvas.getBoundingClientRect();
+      const src=e.touches?e.touches[0]:e;
+      return{x:(src.clientX-r.left)*(canvas.width/r.width),y:(src.clientY-r.top)*(canvas.height/r.height)};
+    };
+    const startDraw=e=>{
+      drawing=true;
+      const p=pos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y);
+    };
+    const doDraw=e=>{
+      if(!drawing)return; e.preventDefault();
+      ctx.globalCompositeOperation=eraserMode?'destination-out':'source-over';
+      ctx.strokeStyle=eraserMode?'rgba(0,0,0,1)':currentColor;
+      ctx.lineWidth=eraserMode?currentSize*2.5:currentSize;
       ctx.lineCap='round'; ctx.lineJoin='round';
       const p=pos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(p.x,p.y);
     };
-    canvas.onmouseup = canvas.onmouseleave = canvas.ontouchend = () => drawing=false;
+    const stopDraw=()=>{drawing=false;ctx.globalCompositeOperation='source-over';};
+    canvas.onmousedown=canvas.ontouchstart=startDraw;
+    canvas.onmousemove=canvas.ontouchmove=doDraw;
+    canvas.onmouseup=canvas.onmouseleave=canvas.ontouchend=stopDraw;
   }
-  window.skClear = function() {
-    const c=document.getElementById('skribbl-canvas'); if(c){const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);}
+
+  window.skClear=function(){
+    const c=document.getElementById('skribbl-canvas');
+    if(c){const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);}
   };
 
-  function handleSkribblGuess(username, msg) {
-    if (!activeGame || activeGame.type!=='skribbl' || activeGame.guessed || username===activeGame.drawerName || activeGame.state!=='drawing') return;
-    if (msg.toLowerCase().trim() === activeGame.currentWord.toLowerCase()) {
-      clearTimeout(skribblTimeout);
-      activeGame.guessed = true;
-      activeGame.scores[username]            = (activeGame.scores[username]||0) + 2;
-      activeGame.scores[activeGame.drawerName] = (activeGame.scores[activeGame.drawerName]||0) + 1;
-      mgLog('✅ ' + username + ' guessed it! Word was: ' + activeGame.currentWord);
-      activeGame.drawerIdx++;
-      const canvas=document.getElementById('skribbl-canvas'), tools=document.getElementById('skribbl-tools');
-      if(canvas) canvas.style.display='none'; if(tools) tools.style.display='none';
-      setTimeout(skribblRound, 1500);
-    }
+  function handleSkribblGuess(username,msg) {
+    if(!activeGame||activeGame.type!=='skribbl'||activeGame.guessed||username===activeGame.drawerName||activeGame.state!=='drawing')return;
+    // Close guess detection (Levenshtein distance 1 for words >=5 chars)
+    const guess=msg.toLowerCase().trim();
+    const word=activeGame.currentWord.toLowerCase();
+    if (guess!==word && !(word.length>=5 && levenshtein(guess,word)<=1)) return;
+    clearTimeout(skribblTimeout);
+    activeGame.guessed=true;
+    const elapsed=Math.floor((Date.now()-activeGame.roundStart)/1000);
+    const speedPts=Math.max(1, Math.floor((SK_TIME-elapsed)/10)+1);
+    activeGame.scores[username]=(activeGame.scores[username]||0)+speedPts+1;
+    activeGame.scores[activeGame.drawerName]=(activeGame.scores[activeGame.drawerName]||0)+1;
+    mgLog('✅ '+username+' guessed it! Word: '+activeGame.currentWord+' (+'+( speedPts+1)+' pts)','goal');
+    revealWord(activeGame.currentWord);
+    mgUpdateScoreboard();
+    activeGame.drawerIdx++;
+    const canvas=document.getElementById('skribbl-canvas'),tools=document.getElementById('sk-tools'),hint=document.getElementById('sk-guesser-hint');
+    if(canvas)canvas.style.display='none';if(tools)tools.style.display='none';if(hint)hint.style.display='none';
+    setTimeout(skribblRound,2000);
+  }
+
+  function levenshtein(a,b){
+    const m=a.length,n=b.length,dp=Array.from({length:m+1},(_,i)=>Array.from({length:n+1},(_,j)=>i?j?0:i:j));
+    for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]:1+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]);
+    return dp[m][n];
   }
 
   function endSkribbl() {
-    mgLog('🎨 GAME OVER! Scores:');
-    Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]).forEach(([p,s],i) => mgLog((i===0?'🥇':i===1?'🥈':'🥉')+' '+p+': '+s+' pts'));
-    activeGame = null;
-    const canvas=document.getElementById('skribbl-canvas'), tools=document.getElementById('skribbl-tools');
-    if(canvas) canvas.style.display='none'; if(tools) tools.style.display='none';
+    if(!activeGame)return;
+    mgLog('🎨 GAME OVER! Final Leaderboard:','system');
+    Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]).forEach(([p,s],i)=>{
+      mgLog((i===0?'🥇':i===1?'🥈':i===2?'🥉':'  ')+' '+p+': '+s+' pts','system');
+    });
+    activeGame=null;
   }
 
-  function showMinigamePanel(html) {
-    const modal=document.getElementById('minigame-modal'), body=document.getElementById('minigame-body');
-    if (body)  body.innerHTML = html;
-    if (modal) modal.classList.remove('hidden');
+  // ─── SHARED GAME UTILS ──────────────────────────────────────
+  function showGamePanel(html) {
+    const modal=mgModal(), body=mgBody();
+    if(body) body.innerHTML=html;
+    if(modal) modal.classList.remove('hidden');
   }
 
   // ===== SOCKET EVENTS =====
