@@ -879,10 +879,27 @@ document.addEventListener('DOMContentLoaded', () => {
   let fbRAF = null;
 
   // Virtual field dimensions (logical coords, canvas scales to fit)
-  const FB_VW = 880, FB_VH = 520;
-  const FB_PRAD = 18, FB_BRAD = 12;
-  const FB_GOAL_H = 140, FB_GOAL_D = 18; // depth of goal area
-  const FB_MATCH_TIME = 240; // seconds
+// ─────────────────────────────────────────────────────────
+  //  ⚽  FOOTBALL  —  Improved physics + art
+  //  Virtual pitch: 880×580 logical units, drawn with
+  //  letterboxing so the whole field always fits on screen.
+  // ─────────────────────────────────────────────────────────
+  const FB_VW = 880, FB_VH = 580;   // logical pitch size
+  const FB_PAD = 24;                 // padding inside canvas around field
+  const FB_PRAD = 11;                // player radius (logical)
+  const FB_BRAD = 9;                 // ball radius (logical)
+  const FB_GOAL_H = 110;             // goal mouth height
+  const FB_GOAL_D = 28;              // goal depth
+  const FB_GOAL_POST = 5;            // goal post width
+  const FB_MATCH_TIME = 240;
+
+  // Physics constants (tuned per-frame at 60fps)
+  const FB_FRICTION   = 0.982;   // grass friction on ball
+  const FB_WALL_DAMP  = 0.72;    // energy lost on wall bounce
+  const FB_KICK_BASE  = 5.5;     // min kick force
+  const FB_PLAYER_ACC = 0.55;    // player acceleration
+  const FB_PLAYER_MAX = 4.8;     // max player speed
+  const FB_PLAYER_DEC = 0.80;    // player deceleration (no input)
 
   function launchFootball() {
     goShow('gscreen-football');
@@ -890,31 +907,40 @@ document.addEventListener('DOMContentLoaded', () => {
     activeGame.score = [0, 0];
     activeGame.timer = FB_MATCH_TIME;
 
-    // Assign team colors
     const half = Math.ceil(activeGame.players.length / 2);
     activeGame.teamBlue = activeGame.players.slice(0, half);
     activeGame.teamRed  = activeGame.players.slice(half);
 
-    // Build physics objects
-    const COLORS = ['#4cc9f0','#7bed9f','#a29bfe','#fd79a8','#ffd700'];
-    const RCOLORS= ['#e94560','#ff7043','#ff9ff3','#ff6b81','#ffb700'];
+    const BCOLORS = ['#4cc9f0','#7bed9f','#a29bfe','#ffd700','#fd79a8'];
+    const RCOLORS = ['#e94560','#ff7043','#ff9ff3','#ff6b81','#ffb700'];
+
     fbState = {
-      ball: { x: FB_VW/2, y: FB_VH/2, vx: 1.5, vy: 0.5, spin: 0 },
+      ball: { x: FB_VW/2, y: FB_VH/2, vx: 1.8, vy: 0.6, spin: 0, spinAngle: 0 },
       players: activeGame.players.map((name, i) => {
         const isBlue = i < half;
+        const slot   = isBlue ? i : i - half;
+        const slots  = isBlue ? half : activeGame.players.length - half;
         return {
           name, isMe: name === myUsername,
           team: isBlue ? 0 : 1,
-          color: isBlue ? (COLORS[i] || '#4cc9f0') : (RCOLORS[i - half] || '#e94560'),
-          x: isBlue ? 180 + (i % 2) * 60 : FB_VW - 180 - (( i - half) % 2) * 60,
-          y: FB_VH * (0.2 + (i % 3) * 0.3),
+          jersey: i + 1,
+          color: isBlue ? (BCOLORS[slot % BCOLORS.length]) : (RCOLORS[slot % RCOLORS.length]),
+          // stagger start positions nicely
+          x: isBlue
+            ? FB_VW * 0.22 + (slot % 2) * 70
+            : FB_VW * 0.78 - (slot % 2) * 70,
+          y: FB_VH * (0.25 + slot * (0.5 / Math.max(1, slots-1))),
           vx: 0, vy: 0,
+          angle: isBlue ? 0 : Math.PI, // facing direction
+          kickCooldown: 0,
         };
       }),
       keys: {},
       goalFlash: 0,
       goalMsg: '',
       over: false,
+      // letterbox transform (set by resizeFB)
+      ox: 0, oy: 0, scale: 1,
     };
 
     const canvas = $g('fb-canvas');
@@ -926,7 +952,23 @@ document.addEventListener('DOMContentLoaded', () => {
     $g('fb-score').textContent      = '0 — 0';
     $g('fb-timer-disp').textContent = '4:00';
 
-    // Keyboard
+    // Letterbox: keep field aspect ratio, add padding
+    const wrap = canvas.parentElement;
+    function resizeFB() {
+      canvas.width  = wrap.clientWidth;
+      canvas.height = wrap.clientHeight;
+      // Scale to fit with padding
+      const availW = canvas.width  - FB_PAD * 2;
+      const availH = canvas.height - FB_PAD * 2;
+      const s = Math.min(availW / FB_VW, availH / FB_VH);
+      fbState.scale = s;
+      fbState.ox    = (canvas.width  - FB_VW * s) / 2;
+      fbState.oy    = (canvas.height - FB_VH * s) / 2;
+    }
+    resizeFB();
+    window.addEventListener('resize', resizeFB);
+
+    // Input
     const onKD = e => {
       fbState.keys[e.key] = true;
       if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
@@ -935,39 +977,28 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('keydown', onKD);
     window.addEventListener('keyup',   onKU);
 
-    // Resize canvas to container
-    const wrap = canvas.parentElement;
-    function resizeFB() {
-      canvas.width  = wrap.clientWidth;
-      canvas.height = wrap.clientHeight;
-    }
-    resizeFB();
-    window.addEventListener('resize', resizeFB);
-
-    // Match timer
+    // Match clock
     const timerInt = setInterval(() => {
       if (!activeGame || fbState.over) { clearInterval(timerInt); return; }
       activeGame.timer = Math.max(0, activeGame.timer - 1);
-      const m = Math.floor(activeGame.timer / 60);
-      const s = activeGame.timer % 60;
+      const m = Math.floor(activeGame.timer / 60), s = activeGame.timer % 60;
       $g('fb-timer-disp').textContent = m + ':' + String(s).padStart(2,'0');
       if (activeGame.timer <= 0) { clearInterval(timerInt); endFootball(onKD, onKU); }
     }, 1000);
 
-    // Broadcast my player position
+    // Position broadcast
     const bcInt = setInterval(() => {
       if (!activeGame || fbState.over) { clearInterval(bcInt); return; }
       const me = fbState.players.find(p => p.isMe);
       if (me) socket.emit('gameState', { roomName: currentRoom, game: 'football',
-        payload: { username: myUsername, x: me.x, y: me.y }});
+        payload: { username: myUsername, x: me.x, y: me.y } });
     }, 50);
 
-    // Quit button
-    const qbtn = $g('fb-quit');
-    const qHandler = () => { clearInterval(timerInt); clearInterval(bcInt); cleanupFB(onKD, onKU); };
-    qbtn?.addEventListener('click', qHandler);
+    $g('fb-quit')?.addEventListener('click', () => {
+      clearInterval(timerInt); clearInterval(bcInt);
+      cleanupFB(onKD, onKU);
+    });
 
-    // Game loop
     function fbLoop() {
       if (fbState.over || !activeGame) return;
       fbTick();
@@ -979,91 +1010,159 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let fbState = null;
 
+  // ── Physics tick ────────────────────────────────────────────
   function fbTick() {
     if (!fbState) return;
+
+    // ── My player input ──
     const me = fbState.players.find(p => p.isMe);
     if (me) {
-      const spd = 4.2;
       const k = fbState.keys;
       let ax = 0, ay = 0;
-      if (k['a'] || k['A'] || k['ArrowLeft'])  ax -= spd;
-      if (k['d'] || k['D'] || k['ArrowRight']) ax += spd;
-      if (k['w'] || k['W'] || k['ArrowUp'])    ay -= spd;
-      if (k['s'] || k['S'] || k['ArrowDown'])  ay += spd;
-      // Diagonal normalise
+      const left  = k['a'] || k['A'] || k['ArrowLeft'];
+      const right = k['d'] || k['D'] || k['ArrowRight'];
+      const up    = k['w'] || k['W'] || k['ArrowUp'];
+      const down  = k['s'] || k['S'] || k['ArrowDown'];
+      if (left)  ax -= FB_PLAYER_ACC;
+      if (right) ax += FB_PLAYER_ACC;
+      if (up)    ay -= FB_PLAYER_ACC;
+      if (down)  ay += FB_PLAYER_ACC;
       if (ax && ay) { ax *= 0.707; ay *= 0.707; }
-      me.vx = me.vx * 0.75 + ax * 0.25;
-      me.vy = me.vy * 0.75 + ay * 0.25;
-      me.x  = Math.max(FB_PRAD, Math.min(FB_VW - FB_PRAD, me.x + me.vx));
-      me.y  = Math.max(FB_PRAD, Math.min(FB_VH - FB_PRAD, me.y + me.vy));
+
+      me.vx += ax;
+      me.vy += ay;
+      if (!ax) me.vx *= FB_PLAYER_DEC;
+      if (!ay) me.vy *= FB_PLAYER_DEC;
+
+      // Clamp speed
+      const spd = Math.hypot(me.vx, me.vy);
+      if (spd > FB_PLAYER_MAX) { me.vx = me.vx/spd*FB_PLAYER_MAX; me.vy = me.vy/spd*FB_PLAYER_MAX; }
+
+      // Update facing angle
+      if (spd > 0.3) me.angle = Math.atan2(me.vy, me.vx);
     }
 
-    // Ball physics
+    // Move all players, clamp to field
+    fbState.players.forEach(p => {
+      p.x = Math.max(FB_PRAD, Math.min(FB_VW - FB_PRAD, p.x + p.vx));
+      p.y = Math.max(FB_PRAD, Math.min(FB_VH - FB_PRAD, p.y + p.vy));
+      if (p.kickCooldown > 0) p.kickCooldown--;
+    });
+
+    // ── Ball physics ──
     const b = fbState.ball;
     b.x  += b.vx;
     b.y  += b.vy;
-    b.vx *= 0.984;
-    b.vy *= 0.984;
-    b.spin *= 0.98;
+    b.vx *= FB_FRICTION;
+    b.vy *= FB_FRICTION;
+    // Spin decays and accumulates into visual angle
+    b.spin     *= 0.97;
+    b.spinAngle = (b.spinAngle + b.spin * 0.06) % (Math.PI * 2);
+    // Spin adds slight curl to trajectory (Magnus effect)
+    b.vx += b.spin * b.vy * 0.018;
+    b.vy -= b.spin * b.vx * 0.018;
 
-    // Wall collisions (with goal gaps)
+    // ── Wall / goal collisions ──
     const gTop = (FB_VH - FB_GOAL_H) / 2;
     const gBot = gTop + FB_GOAL_H;
+    const bMinX = FB_BRAD, bMaxX = FB_VW - FB_BRAD;
+    const bMinY = FB_BRAD, bMaxY = FB_VH - FB_BRAD;
 
-    // Left wall / left goal
-    if (b.x - FB_BRAD < FB_GOAL_D) {
+    // Top / bottom walls
+    if (b.y < bMinY) { b.y = bMinY; b.vy = Math.abs(b.vy) * FB_WALL_DAMP; b.spin *= -0.5; }
+    if (b.y > bMaxY) { b.y = bMaxY; b.vy = -Math.abs(b.vy) * FB_WALL_DAMP; b.spin *= -0.5; }
+
+    // Left wall (has goal gap)
+    if (b.x < bMinX) {
       if (b.y >= gTop && b.y <= gBot) {
-        // Goal for Red team!
-        if (b.x < 0) { fbScoreGoal(1); return; }
+        // Scored — inside goal net
+        if (b.x < -FB_GOAL_D) { fbScoreGoal(1); return; }
+        // Inside goal mouth — bounce off back net
+        if (b.x < FB_BRAD - FB_GOAL_D + 2) { b.vx = Math.abs(b.vx) * 0.5; b.vy *= 0.6; }
       } else {
-        b.x = FB_GOAL_D + FB_BRAD;
-        b.vx = Math.abs(b.vx) * 0.8;
+        b.x = bMinX; b.vx = Math.abs(b.vx) * FB_WALL_DAMP;
       }
     }
-    // Right wall / right goal
-    if (b.x + FB_BRAD > FB_VW - FB_GOAL_D) {
+    // Right wall
+    if (b.x > bMaxX) {
       if (b.y >= gTop && b.y <= gBot) {
-        if (b.x > FB_VW) { fbScoreGoal(0); return; }
+        if (b.x > FB_VW + FB_GOAL_D) { fbScoreGoal(0); return; }
+        if (b.x > bMaxX + FB_GOAL_D - 2) { b.vx = -Math.abs(b.vx) * 0.5; b.vy *= 0.6; }
       } else {
-        b.x = FB_VW - FB_GOAL_D - FB_BRAD;
-        b.vx = -Math.abs(b.vx) * 0.8;
+        b.x = bMaxX; b.vx = -Math.abs(b.vx) * FB_WALL_DAMP;
       }
     }
-    if (b.y - FB_BRAD < 0)       { b.y = FB_BRAD;         b.vy =  Math.abs(b.vy) * 0.8; }
-    if (b.y + FB_BRAD > FB_VH)   { b.y = FB_VH - FB_BRAD; b.vy = -Math.abs(b.vy) * 0.8; }
 
-    // Player-ball collision
+    // Goal post collisions (corners of the goal mouth)
+    const postBounce = (px, py) => {
+      const dx = b.x - px, dy = b.y - py;
+      const d = Math.hypot(dx, dy);
+      if (d < FB_BRAD + FB_GOAL_POST) {
+        const nx = dx/d, ny = dy/d;
+        const dot = b.vx*nx + b.vy*ny;
+        if (dot < 0) {
+          b.vx -= 2*dot*nx * 0.85;
+          b.vy -= 2*dot*ny * 0.85;
+          b.spin += nx * 1.5;
+        }
+        b.x = px + nx*(FB_BRAD + FB_GOAL_POST + 0.5);
+        b.y = py + ny*(FB_BRAD + FB_GOAL_POST + 0.5);
+      }
+    };
+    postBounce(0, gTop); postBounce(0, gBot);
+    postBounce(FB_VW, gTop); postBounce(FB_VW, gBot);
+
+    // ── Player–ball elastic collision ──
     fbState.players.forEach(p => {
       const dx = b.x - p.x, dy = b.y - p.y;
       const dist = Math.hypot(dx, dy);
-      const minD = FB_PRAD + FB_BRAD;
-      if (dist < minD && dist > 0.1) {
-        const nx = dx / dist, ny = dy / dist;
-        const relVx = b.vx - p.vx, relVy = b.vy - p.vy;
-        const imp = (relVx * nx + relVy * ny);
-        if (imp < 0) {
-          const force = Math.max(3, Math.hypot(p.vx, p.vy) + 2.5);
-          b.vx += nx * force * 1.4;
-          b.vy += ny * force * 1.4;
-          b.spin = (nx * p.vy - ny * p.vx) * 0.3;
+      const minD  = FB_PRAD + FB_BRAD;
+      if (dist < minD && dist > 0.01) {
+        const nx = dx/dist, ny = dy/dist;
+        // Relative velocity along normal
+        const relVn = (b.vx - p.vx)*nx + (b.vy - p.vy)*ny;
+        if (relVn < 0) { // only resolve if approaching
+          // Restitution coefficient (bouncier than before)
+          const e = 0.82;
+          // Impulse — ball treated as much lighter (mass ratio ~0.4)
+          const j = -(1+e) * relVn / (1 + 0.4);
+          b.vx += j * nx;
+          b.vy += j * ny;
+          // Spin from tangential velocity (feels like toe kick)
+          b.spin += (nx * p.vy - ny * p.vx) * 0.35;
+          // Add a small minimum kick so the ball always moves
+          const bSpd = Math.hypot(b.vx, b.vy);
+          if (bSpd < FB_KICK_BASE) {
+            const boost = FB_KICK_BASE / Math.max(0.1, bSpd);
+            b.vx *= boost; b.vy *= boost;
+          }
         }
-        const overlap = minD - dist;
+        // Separate ball out of player
+        const overlap = minD - dist + 0.5;
         b.x += nx * overlap;
         b.y += ny * overlap;
       }
     });
 
-    // Player-player collision
+    // ── Player–player collision (elastic, equal mass) ──
     for (let i = 0; i < fbState.players.length; i++) {
-      for (let j = i + 1; j < fbState.players.length; j++) {
+      for (let j = i+1; j < fbState.players.length; j++) {
         const a = fbState.players[i], bb2 = fbState.players[j];
         const dx = bb2.x - a.x, dy = bb2.y - a.y;
         const dist = Math.hypot(dx, dy);
-        if (dist < FB_PRAD * 2 && dist > 0.1) {
+        const minD  = FB_PRAD * 2;
+        if (dist < minD && dist > 0.01) {
           const nx = dx/dist, ny = dy/dist;
-          const overlap = (FB_PRAD * 2 - dist) / 2;
-          if (a.isMe || !bb2.isMe) { a.x -= nx * overlap; a.y -= ny * overlap; }
-          if (bb2.isMe || !a.isMe) { bb2.x += nx * overlap; bb2.y += ny * overlap; }
+          const overlap = (minD - dist) / 2;
+          // Push both apart
+          a.x  -= nx * overlap; a.y  -= ny * overlap;
+          bb2.x += nx * overlap; bb2.y += ny * overlap;
+          // Velocity exchange along normal (elastic)
+          const relVn = (a.vx - bb2.vx)*nx + (a.vy - bb2.vy)*ny;
+          if (relVn > 0) {
+            a.vx   -= relVn*nx * 0.7; a.vy   -= relVn*ny * 0.7;
+            bb2.vx += relVn*nx * 0.7; bb2.vy += relVn*ny * 0.7;
+          }
         }
       }
     }
@@ -1071,129 +1170,310 @@ document.addEventListener('DOMContentLoaded', () => {
     if (fbState.goalFlash > 0) fbState.goalFlash--;
   }
 
+  // ── Goal scored ─────────────────────────────────────────────
   function fbScoreGoal(scoringTeam) {
     if (!activeGame || !fbState) return;
     activeGame.score[scoringTeam]++;
-    const blueScore = activeGame.score[0], redScore = activeGame.score[1];
+    const [blueScore, redScore] = activeGame.score;
     $g('fb-score').textContent = blueScore + ' — ' + redScore;
-    const scorer = scoringTeam === 0 ? activeGame.teamBlue : activeGame.teamRed;
+    const scorer    = scoringTeam === 0 ? activeGame.teamBlue : activeGame.teamRed;
     const scorerName = scorer[Math.floor(Math.random() * scorer.length)];
-    fbState.goalMsg = '⚽ GOAL! ' + scorerName + '!';
-    fbState.goalFlash = 120;
+    fbState.goalMsg  = '⚽  GOAL!  ' + scorerName;
+    fbState.goalFlash = 150;
     addSystemMessage('⚽ GOAL! ' + scorerName + '! Score: ' + blueScore + ' — ' + redScore);
-    // Reset positions
-    fbState.ball = { x: FB_VW/2, y: FB_VH/2, vx: (Math.random()-.5)*3, vy: (Math.random()-.5)*2, spin:0 };
+
+    // Reset ball + players with brief pause
+    fbState.ball = { x: FB_VW/2, y: FB_VH/2, vx: (Math.random()>.5?1:-1)*2, vy: (Math.random()-.5)*1.5, spin: 0, spinAngle: 0 };
     fbState.players.forEach((p, i) => {
       const half = Math.ceil(activeGame.players.length / 2);
-      p.x = p.team === 0 ? 180 + (i % 2)*60 : FB_VW - 180 - ((i - half) % 2)*60;
-      p.y = FB_VH * (0.25 + (i % 3)*0.25);
+      const slot  = p.team === 0 ? i : i - half;
+      const slots  = p.team === 0 ? half : activeGame.players.length - half;
+      p.x = p.team === 0
+        ? FB_VW * 0.22 + (slot % 2) * 70
+        : FB_VW * 0.78 - (slot % 2) * 70;
+      p.y = FB_VH * (0.25 + slot * (0.5 / Math.max(1, slots-1)));
       p.vx = 0; p.vy = 0;
     });
   }
 
+  // ── Drawing ─────────────────────────────────────────────────
   function fbDraw(ctx, canvas) {
     if (!fbState) return;
     const cw = canvas.width, ch = canvas.height;
-    const sx = cw / FB_VW, sy = ch / FB_VH;
+    const s  = fbState.scale, ox = fbState.ox, oy = fbState.oy;
+    // Helpers: logical → canvas
+    const cx = x => ox + x * s;
+    const cy = y => oy + y * s;
+    const cs = v => v * s;
 
-    // Field background with stripes
-    ctx.fillStyle = '#2d7a2d';
+    // ── Canvas background (outside field) ──
+    ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, cw, ch);
-    for (let i = 0; i < 8; i++) {
-      ctx.fillStyle = i % 2 ? 'rgba(0,0,0,0.07)' : 'transparent';
-      ctx.fillRect(i * cw/8, 0, cw/8, ch);
+
+    // ── Grass stripes ──
+    const stripes = 10;
+    for (let i = 0; i < stripes; i++) {
+      ctx.fillStyle = i % 2 === 0 ? '#2a7a2a' : '#277027';
+      ctx.fillRect(cx(i * FB_VW/stripes), cy(0), cs(FB_VW/stripes)+1, cs(FB_VH));
     }
 
-    // Field lines
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-    ctx.lineWidth = 2;
-    // Border
-    ctx.strokeRect(sx*30, sy*20, cw - sx*60, ch - sy*40);
+    // ── Field border (thick) ──
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth   = cs(2.5);
+    ctx.strokeRect(cx(0)+ctx.lineWidth/2, cy(0)+ctx.lineWidth/2,
+                   cs(FB_VW)-ctx.lineWidth, cs(FB_VH)-ctx.lineWidth);
+
+    const lw = cs(1.8);
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth   = lw;
+
     // Centre line
-    ctx.beginPath(); ctx.moveTo(cw/2, sy*20); ctx.lineTo(cw/2, ch-sy*20); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx(FB_VW/2), cy(0));
+    ctx.lineTo(cx(FB_VW/2), cy(FB_VH));
+    ctx.stroke();
+
     // Centre circle
-    ctx.beginPath(); ctx.arc(cw/2, ch/2, sx*70, 0, Math.PI*2); ctx.stroke();
-    // Centre dot
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.beginPath(); ctx.arc(cw/2, ch/2, 4, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx(FB_VW/2), cy(FB_VH/2), cs(70), 0, Math.PI*2);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath(); ctx.arc(cx(FB_VW/2), cy(FB_VH/2), cs(3.5), 0, Math.PI*2); ctx.fill();
 
-    // Goals
-    const gTop = (ch - FB_GOAL_H*sy)/2, gH = FB_GOAL_H*sy, gD = FB_GOAL_D*sx;
-    // Left goal (red scores here)
-    ctx.fillStyle = 'rgba(76,201,240,0.15)';
-    ctx.fillRect(0, gTop, gD, gH);
-    ctx.strokeStyle = '#4cc9f0';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(0, gTop, gD, gH);
-    // Right goal (blue scores here)
-    ctx.fillStyle = 'rgba(233,69,96,0.15)';
-    ctx.fillRect(cw - gD, gTop, gD, gH);
-    ctx.strokeStyle = '#e94560';
-    ctx.strokeRect(cw - gD, gTop, gD, gH);
+    // Penalty areas (left & right)
+    const penW = 130, penH = 240;
+    const penY = (FB_VH - penH) / 2;
+    // Left
+    ctx.strokeRect(cx(0), cy(penY), cs(penW), cs(penH));
+    // Right
+    ctx.strokeRect(cx(FB_VW - penW), cy(penY), cs(penW), cs(penH));
 
-    // Players
+    // Small boxes (6-yard box)
+    const sboxW = 52, sboxH = 150, sboxY = (FB_VH - sboxH) / 2;
+    ctx.strokeRect(cx(0), cy(sboxY), cs(sboxW), cs(sboxH));
+    ctx.strokeRect(cx(FB_VW - sboxW), cy(sboxY), cs(sboxW), cs(sboxH));
+
+    // Penalty spots
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.beginPath(); ctx.arc(cx(88), cy(FB_VH/2), cs(3), 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx(FB_VW-88), cy(FB_VH/2), cs(3), 0, Math.PI*2); ctx.fill();
+
+    // Penalty arc
+    ctx.beginPath();
+    ctx.arc(cx(88), cy(FB_VH/2), cs(70), -Math.PI*0.58, Math.PI*0.58);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx(FB_VW-88), cy(FB_VH/2), cs(70), Math.PI*0.42, Math.PI*1.58);
+    ctx.stroke();
+
+    // Corner arcs
+    const crn = cs(16);
+    [[0,0,0,Math.PI/2],[FB_VW,0,Math.PI/2,Math.PI],[FB_VW,FB_VH,Math.PI,Math.PI*1.5],[0,FB_VH,Math.PI*1.5,Math.PI*2]]
+      .forEach(([px,py,a1,a2]) => {
+        ctx.beginPath(); ctx.arc(cx(px),cy(py),crn,a1,a2); ctx.stroke();
+      });
+
+    // ── Goals (net + posts) ──
+    const gTop  = (FB_VH - FB_GOAL_H) / 2;
+    const gBot  = gTop + FB_GOAL_H;
+    const postR = cs(FB_GOAL_POST);
+
+    function drawGoal(isLeft) {
+      const gx = isLeft ? 0 : FB_VW;
+      const dir = isLeft ? 1 : -1;
+      const netColor = isLeft ? 'rgba(76,201,240,0.18)' : 'rgba(233,69,96,0.18)';
+      const postColor= isLeft ? '#4cc9f0' : '#e94560';
+
+      // Net fill
+      ctx.fillStyle = netColor;
+      const nx = isLeft ? cx(0) : cx(FB_VW) - cs(FB_GOAL_D);
+      ctx.fillRect(nx, cy(gTop), cs(FB_GOAL_D), cs(FB_GOAL_H));
+
+      // Net grid lines
+      ctx.strokeStyle = isLeft ? 'rgba(76,201,240,0.35)' : 'rgba(233,69,96,0.35)';
+      ctx.lineWidth   = cs(0.7);
+      const cells = 6;
+      for (let r = 1; r < cells; r++) {
+        const gy = cy(gTop) + cs(FB_GOAL_H) * r / cells;
+        ctx.beginPath();
+        ctx.moveTo(nx, gy);
+        ctx.lineTo(nx + cs(FB_GOAL_D), gy);
+        ctx.stroke();
+      }
+      const cols = 4;
+      for (let c = 1; c < cols; c++) {
+        const gxx = nx + cs(FB_GOAL_D) * c / cols;
+        ctx.beginPath();
+        ctx.moveTo(gxx, cy(gTop));
+        ctx.lineTo(gxx, cy(gBot));
+        ctx.stroke();
+      }
+
+      // Posts
+      ctx.fillStyle = postColor;
+      ctx.shadowBlur = cs(8); ctx.shadowColor = postColor;
+      // Top post
+      ctx.beginPath(); ctx.arc(cx(gx), cy(gTop), postR, 0, Math.PI*2); ctx.fill();
+      // Bottom post
+      ctx.beginPath(); ctx.arc(cx(gx), cy(gBot), postR, 0, Math.PI*2); ctx.fill();
+      // Crossbar line
+      ctx.strokeStyle = postColor;
+      ctx.lineWidth   = postR * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx(gx), cy(gTop));
+      ctx.lineTo(cx(gx), cy(gBot));
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+    drawGoal(true);
+    drawGoal(false);
+
+    // ── Players ──
     fbState.players.forEach(p => {
-      const px = p.x * sx, py = p.y * sy, r = FB_PRAD * sx;
+      const px = cx(p.x), py = cy(p.y);
+      const r  = cs(FB_PRAD);
+
       // Shadow
-      ctx.fillStyle = 'rgba(0,0,0,0.25)';
-      ctx.beginPath(); ctx.ellipse(px, py + r + 3, r*0.8, r*0.3, 0, 0, Math.PI*2); ctx.fill();
-      // Body
-      const grad = ctx.createRadialGradient(px-r*0.3, py-r*0.3, r*0.1, px, py, r);
-      grad.addColorStop(0, lightenColor(p.color, 40));
-      grad.addColorStop(1, p.color);
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.beginPath();
+      ctx.ellipse(px + cs(2), py + r*0.55, r*0.85, r*0.28, 0, 0, Math.PI*2);
+      ctx.fill();
+
+      // Glow for "me"
+      if (p.isMe) {
+        ctx.shadowBlur  = cs(18);
+        ctx.shadowColor = '#fff';
+      }
+
+      // Jersey body (circle)
+      const grad = ctx.createRadialGradient(px - r*0.3, py - r*0.35, r*0.05, px, py, r);
+      grad.addColorStop(0, fbLighten(p.color, 55));
+      grad.addColorStop(0.6, p.color);
+      grad.addColorStop(1,   fbDarken(p.color, 40));
       ctx.fillStyle = grad;
-      ctx.shadowBlur = p.isMe ? 16 : 6;
-      ctx.shadowColor = p.color;
       ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI*2); ctx.fill();
       ctx.shadowBlur = 0;
-      // Outline
-      ctx.strokeStyle = p.isMe ? '#fff' : 'rgba(0,0,0,0.4)';
-      ctx.lineWidth = p.isMe ? 2.5 : 1;
+
+      // Border ring
+      ctx.strokeStyle = p.isMe ? '#fff' : 'rgba(0,0,0,0.5)';
+      ctx.lineWidth   = p.isMe ? cs(2.2) : cs(1);
       ctx.stroke();
-      // Name tag
+
+      // Direction indicator (small triangle pointing movement dir)
+      const da = p.angle || 0;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(da);
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath();
+      ctx.moveTo(r * 0.62, 0);
+      ctx.lineTo(r * 0.22, -r * 0.22);
+      ctx.lineTo(r * 0.22,  r * 0.22);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // Jersey number
       ctx.fillStyle = '#fff';
-      ctx.font = `bold ${Math.round(r*0.55)}px sans-serif`;
-      ctx.textAlign = 'center';
+      ctx.font      = `bold ${Math.round(r*0.72)}px sans-serif`;
+      ctx.textAlign    = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(p.name.slice(0, 4), px, py);
+      ctx.fillText(String(p.jersey), px, py + r*0.08);
+
+      // Name tag above
+      ctx.fillStyle    = p.isMe ? '#fff' : 'rgba(255,255,255,0.75)';
+      ctx.font         = `${Math.round(r*0.55)}px sans-serif`;
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(p.name.slice(0,6), px, py - r - cs(2));
     });
 
-    // Ball
-    const bx = fbState.ball.x * sx, by = fbState.ball.y * sy, br = FB_BRAD * sx;
+    // ── Ball ──
+    const bx = cx(fbState.ball.x), by = cy(fbState.ball.y);
+    const br = cs(FB_BRAD);
+
     ctx.save();
     ctx.translate(bx, by);
-    ctx.rotate(fbState.ball.spin);
-    // Shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.beginPath(); ctx.ellipse(2, br+3, br*0.9, br*0.35, 0, 0, Math.PI*2); ctx.fill();
-    // Ball
-    ctx.fillStyle = '#fff';
-    ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(255,255,255,0.8)';
+    ctx.rotate(fbState.ball.spinAngle);
+
+    // Drop shadow
+    ctx.shadowBlur  = 0;
+    ctx.fillStyle   = 'rgba(0,0,0,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(cs(2), br*0.6, br*0.9, br*0.32, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // Ball white base
+    ctx.shadowBlur  = cs(10);
+    ctx.shadowColor = 'rgba(255,255,255,0.9)';
+    ctx.fillStyle   = '#f0f0f0';
     ctx.beginPath(); ctx.arc(0, 0, br, 0, Math.PI*2); ctx.fill();
     ctx.shadowBlur = 0;
-    // Ball pattern
-    ctx.fillStyle = '#222';
-    ctx.beginPath(); ctx.arc(br*0.3, -br*0.3, br*0.25, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(-br*0.35, br*0.2, br*0.22, 0, Math.PI*2); ctx.fill();
+
+    // Classic football hexagon patches (5 visible)
+    ctx.fillStyle = '#1a1a1a';
+    // Centre patch
+    fbDrawPatch(ctx, 0, 0, br * 0.38);
+    // 5 surrounding patches at angles
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 - Math.PI/2;
+      fbDrawPatch(ctx, Math.cos(a)*br*0.68, Math.sin(a)*br*0.68, br*0.30);
+    }
+
+    // Specular highlight
+    const hl = ctx.createRadialGradient(-br*0.3, -br*0.35, 0, -br*0.2, -br*0.2, br*0.55);
+    hl.addColorStop(0, 'rgba(255,255,255,0.45)');
+    hl.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hl;
+    ctx.beginPath(); ctx.arc(0, 0, br, 0, Math.PI*2); ctx.fill();
+
     ctx.restore();
 
-    // Goal flash
+    // ── Goal flash overlay ──
     if (fbState.goalFlash > 0) {
-      const alpha = Math.min(1, fbState.goalFlash / 40);
-      ctx.fillStyle = `rgba(255,230,0,${alpha * 0.25})`;
+      const t     = fbState.goalFlash / 150;
+      const alpha = Math.sin(t * Math.PI) * 0.55;
+      ctx.fillStyle = `rgba(255,210,0,${alpha})`;
       ctx.fillRect(0, 0, cw, ch);
-      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-      ctx.font = `bold ${Math.round(cw/12)}px sans-serif`;
+
+      const fontSize = Math.round(cw / 10);
+      ctx.save();
+      ctx.font      = `bold ${fontSize}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      // Text shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillText(fbState.goalMsg, cw/2 + 3, ch/2 + 3);
+      ctx.fillStyle = '#fff';
       ctx.fillText(fbState.goalMsg, cw/2, ch/2);
+      ctx.restore();
     }
   }
 
-  function lightenColor(hex, amount) {
-    const r = Math.min(255, parseInt(hex.slice(1,3),16)+amount);
-    const g = Math.min(255, parseInt(hex.slice(3,5),16)+amount);
-    const b = Math.min(255, parseInt(hex.slice(5,7),16)+amount);
+  // Draw a rounded pentagon patch on the ball
+  function fbDrawPatch(ctx, x, y, r) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (i/6) * Math.PI*2 - Math.PI/6;
+      if (i===0) ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r);
+      else ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function fbLighten(hex, amt) {
+    const r=Math.min(255,parseInt(hex.slice(1,3),16)+amt);
+    const g=Math.min(255,parseInt(hex.slice(3,5),16)+amt);
+    const b=Math.min(255,parseInt(hex.slice(5,7),16)+amt);
+    return `rgb(${r},${g},${b})`;
+  }
+  function fbDarken(hex, amt) {
+    const r=Math.max(0,parseInt(hex.slice(1,3),16)-amt);
+    const g=Math.max(0,parseInt(hex.slice(3,5),16)-amt);
+    const b=Math.max(0,parseInt(hex.slice(5,7),16)-amt);
     return `rgb(${r},${g},${b})`;
   }
 
@@ -1203,26 +1483,28 @@ document.addEventListener('DOMContentLoaded', () => {
     cancelAnimationFrame(fbRAF); fbRAF = null;
     window.removeEventListener('keydown', onKD);
     window.removeEventListener('keyup',   onKU);
-    const [b, r] = activeGame.score;
-    const msg = b > r ? activeGame.teamBlue.join('+') + ' WIN! 🏆' : r > b ? activeGame.teamRed.join('+') + ' WIN! 🏆' : 'DRAW! 🤝';
-    addSystemMessage('🏁 FULL TIME: Blue ' + b + ' — ' + r + ' Red  |  ' + msg);
-    // Draw final screen on canvas
+    const [bl, rd] = activeGame.score;
+    const winner = bl > rd ? activeGame.teamBlue.join('+') + ' WIN 🏆'
+                 : rd > bl ? activeGame.teamRed.join('+') + ' WIN 🏆' : 'DRAW 🤝';
+    addSystemMessage('🏁 FULL TIME: Blue ' + bl + ' — ' + rd + ' Red  |  ' + winner);
     const canvas = $g('fb-canvas'), ctx = canvas?.getContext('2d');
     if (ctx && canvas) {
-      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      ctx.fillStyle = 'rgba(0,0,0,0.78)';
       ctx.fillRect(0,0,canvas.width,canvas.height);
-      ctx.fillStyle = '#ffd700';
-      ctx.font = `bold ${Math.round(canvas.width/14)}px sans-serif`;
+      const s = fbState.scale;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('FULL TIME', canvas.width/2, canvas.height/2 - 24);
+      ctx.fillStyle = '#ffd700';
+      ctx.font      = `bold ${Math.round(s*38)}px sans-serif`;
+      ctx.fillText('FULL TIME', canvas.width/2, canvas.height/2 - s*26);
       ctx.fillStyle = '#fff';
-      ctx.font = `${Math.round(canvas.width/18)}px sans-serif`;
-      ctx.fillText('Blue ' + b + ' — ' + r + ' Red', canvas.width/2, canvas.height/2 + 20);
-      ctx.font = `${Math.round(canvas.width/22)}px sans-serif`;
-      ctx.fillText(msg, canvas.width/2, canvas.height/2 + 60);
+      ctx.font      = `${Math.round(s*26)}px sans-serif`;
+      ctx.fillText('Blue ' + bl + ' — ' + rd + ' Red', canvas.width/2, canvas.height/2 + s*16);
+      ctx.font      = `${Math.round(s*20)}px sans-serif`;
+      ctx.fillStyle = '#ffd700';
+      ctx.fillText(winner, canvas.width/2, canvas.height/2 + s*52);
     }
     activeGame = null;
-    setTimeout(goHide, 5000);
+    setTimeout(goHide, 5500);
   }
 
   function cleanupFB(onKD, onKU) {
@@ -2018,6 +2300,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if(Math.abs(b.x-p.x)<PD_PRAD+6&&Math.abs(b.y-p.y)<PD_PRAD+6){
           p.hp=Math.max(0,p.hp-20);
           hit=true;
+          pdSpawnHit(b.x, b.y, pdState.players[b.owner]?.color || '#fff');
           updatePdHP();
           if(p.hp<=0)pdRoundOver(b.owner);
         }
@@ -2066,58 +2349,261 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(goHide,4000);
   }
 
-  function pdDraw(ctx,canvas){
-    if(!pdState)return;
-    const cw=canvas.width,ch=canvas.height;
-    const sx=cw/PD_VW,sy=ch/PD_VH;
-    // Background
-    const grad=ctx.createLinearGradient(0,0,0,ch);
-    grad.addColorStop(0,'#070720');grad.addColorStop(1,'#1a1a4e');
-    ctx.fillStyle=grad;ctx.fillRect(0,0,cw,ch);
-    // Stars
-    ctx.fillStyle='rgba(255,255,255,0.35)';
-    for(let i=0;i<60;i++){ctx.fillRect(((i*127+43)%cw),(i*71)%ch,1,1);}
-    // Platforms
-    PD_PLATFORMS.forEach(pl=>{
-      const px=pl.x*sx,py=pl.y*sy,pw=pl.w*sx,ph=pl.h*sy;
-      const g=ctx.createLinearGradient(px,py,px,py+ph);
-      g.addColorStop(0,'#4a4a9a');g.addColorStop(1,'#2d2d6e');
-      ctx.fillStyle=g;ctx.fillRect(px,py,pw,ph);
-      ctx.fillStyle='#6e6ec8';ctx.fillRect(px,py,pw,3);
+  // roundRect polyfill for browsers that don't support it
+  if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+      r = Math.min(r, w/2, h/2);
+      this.beginPath();
+      this.moveTo(x+r, y);
+      this.lineTo(x+w-r, y);       this.arcTo(x+w, y,   x+w, y+r,   r);
+      this.lineTo(x+w, y+h-r);     this.arcTo(x+w, y+h, x+w-r, y+h, r);
+      this.lineTo(x+r, y+h);       this.arcTo(x,   y+h, x, y+h-r,   r);
+      this.lineTo(x, y+r);         this.arcTo(x,   y,   x+r, y,      r);
+      this.closePath();
+    };
+  }
+
+  // Pixel Duel particle effects
+  let pdParticles = [];
+  function pdSpawnHit(x, y, color) {
+    for (let i = 0; i < 8; i++) {
+      const a = (i/8)*Math.PI*2, spd = 1.5+Math.random()*2.5;
+      pdParticles.push({ x, y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd, life: 22, color });
+    }
+  }
+
+  function pdDraw(ctx, canvas) {
+    if (!pdState) return;
+    const cw = canvas.width, ch = canvas.height;
+    const sx = cw/PD_VW, sy = ch/PD_VH;
+    const sc = Math.min(sx, sy); // uniform scale for radius
+
+    // ── Background: deep space gradient with parallax layers ──
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, ch);
+    bgGrad.addColorStop(0, '#04040f');
+    bgGrad.addColorStop(0.5, '#0a0a22');
+    bgGrad.addColorStop(1, '#12122e');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Nebula glow (soft blobs)
+    const nebulas = [[0.2,0.3,'rgba(76,201,240,0.04)'],[0.8,0.6,'rgba(233,69,96,0.04)'],[0.5,0.8,'rgba(162,155,254,0.03)']];
+    nebulas.forEach(([nx,ny,nc]) => {
+      const ng = ctx.createRadialGradient(cw*nx, ch*ny, 0, cw*nx, ch*ny, cw*0.4);
+      ng.addColorStop(0, nc); ng.addColorStop(1, 'transparent');
+      ctx.fillStyle = ng; ctx.fillRect(0, 0, cw, ch);
     });
-    // Bullets
-    pdState.bullets.forEach(b=>{
-      const bx=b.x*sx,by=b.y*sy;
-      ctx.shadowBlur=10;ctx.shadowColor=pdState.players[b.owner]?.color||'#fff';
-      ctx.fillStyle=pdState.players[b.owner]?.color||'#fff';
-      ctx.beginPath();ctx.arc(bx,by,5,0,Math.PI*2);ctx.fill();
-      ctx.shadowBlur=0;
+
+    // Stars (two layers: dim far + bright near)
+    for (let i = 0; i < 80; i++) {
+      const x = ((i*137+17) % 997) / 997 * cw;
+      const y = ((i*251+43) % 997) / 997 * ch;
+      const size = i < 50 ? 0.8 : 1.4;
+      const alpha = i < 50 ? 0.25 : 0.6;
+      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+      ctx.fillRect(x, y, size, size);
+    }
+
+    // Arena floor glow (coloured team sides)
+    const floorY = PD_PLATFORMS[0].y * sy; // floor y
+    const floorGlowL = ctx.createLinearGradient(0, floorY-sc*30, 0, floorY);
+    floorGlowL.addColorStop(0, 'transparent');
+    floorGlowL.addColorStop(1, 'rgba(76,201,240,0.07)');
+    ctx.fillStyle = floorGlowL;
+    ctx.fillRect(0, floorY-sc*30, cw/2, sc*30);
+    const floorGlowR = ctx.createLinearGradient(0, floorY-sc*30, 0, floorY);
+    floorGlowR.addColorStop(0, 'transparent');
+    floorGlowR.addColorStop(1, 'rgba(233,69,96,0.07)');
+    ctx.fillStyle = floorGlowR;
+    ctx.fillRect(cw/2, floorY-sc*30, cw/2, sc*30);
+
+    // ── Platforms ──
+    PD_PLATFORMS.forEach((pl, idx) => {
+      const px = pl.x*sx, py = pl.y*sy, pw = pl.w*sx, ph = pl.h*sy;
+      // Platform body gradient
+      const pg = ctx.createLinearGradient(px, py, px, py+ph);
+      if (idx === 0) { // floor
+        pg.addColorStop(0, '#2a2a5e');
+        pg.addColorStop(1, '#16163a');
+      } else {
+        pg.addColorStop(0, '#3a3a7e');
+        pg.addColorStop(1, '#22224e');
+      }
+      ctx.fillStyle = pg;
+      // Rounded rect
+      const rad = Math.min(ph/2, sc*4);
+      ctx.beginPath();
+      ctx.roundRect(px, py, pw, ph, rad);
+      ctx.fill();
+
+      // Top edge bright line
+      ctx.fillStyle = idx === 0 ? 'rgba(120,120,220,0.8)' : 'rgba(140,140,240,0.7)';
+      ctx.fillRect(px + rad, py, pw - rad*2, sc*1.5);
+
+      // Edge glow
+      ctx.shadowBlur = sc*8; ctx.shadowColor = 'rgba(100,100,255,0.4)';
+      ctx.strokeStyle = 'rgba(100,100,200,0.3)';
+      ctx.lineWidth = sc*1;
+      ctx.beginPath(); ctx.roundRect(px, py, pw, ph, rad); ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Platform surface detail (ticks on floor only)
+      if (idx === 0 && pw > sc*100) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.lineWidth = sc*0.8;
+        for (let t = sc*40; t < pw; t += sc*40) {
+          ctx.beginPath(); ctx.moveTo(px+t, py); ctx.lineTo(px+t, py+ph); ctx.stroke();
+        }
+      }
     });
-    // Players
-    pdState.players.forEach(p=>{
-      const px=p.x*sx,py=p.y*sy,r=PD_PRAD*Math.min(sx,sy);
-      ctx.shadowBlur=p.isMe?18:8;ctx.shadowColor=p.color;
-      ctx.fillStyle=p.color;
-      ctx.beginPath();ctx.arc(px,py,r,0,Math.PI*2);ctx.fill();
-      ctx.shadowBlur=0;
-      ctx.strokeStyle=p.isMe?'#fff':'rgba(255,255,255,0.4)';
-      ctx.lineWidth=p.isMe?3:1.5;ctx.stroke();
-      // Gun
-      ctx.fillStyle='#bbb';
-      ctx.fillRect(px+(p.facing*r),py-2,p.facing*r,5);
-      // Name
-      ctx.fillStyle='#fff';ctx.font=`bold ${Math.round(r*0.6)}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillText(p.name.slice(0,5),px,py);
-      // HP bar over head
-      const barW=r*3;
-      ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(px-barW/2,py-r-12,barW,6);
-      ctx.fillStyle=p.hp>50?'#7bed9f':p.hp>25?'#ffb700':'#e94560';
-      ctx.fillRect(px-barW/2,py-r-12,(barW*p.hp/100),6);
+
+    // ── Particles ──
+    pdParticles = pdParticles.filter(p => p.life > 0);
+    pdParticles.forEach(p => {
+      p.x += p.vx*sx; p.y += p.vy*sy; p.life--;
+      ctx.globalAlpha = p.life / 22;
+      ctx.fillStyle = p.color;
+      ctx.shadowBlur = sc*6; ctx.shadowColor = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, sc*2.5, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
     });
-    if(pdState.roundOver){
-      ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,ch/2-30,cw,60);
-      ctx.fillStyle='#ffd700';ctx.font=`bold ${Math.round(cw/18)}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillText('ROUND OVER!',cw/2,ch/2);
+    ctx.globalAlpha = 1;
+
+    // ── Bullets ──
+    pdState.bullets.forEach(b => {
+      const bx = b.x*sx, by = b.y*sy;
+      const col = pdState.players[b.owner]?.color || '#fff';
+      // Trail
+      for (let t = 1; t <= 3; t++) {
+        ctx.globalAlpha = 0.15 * t;
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.arc(bx - b.vx*sx*t*0.4, by - b.vy*sy*t*0.4, sc*2.5, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      // Core bullet
+      ctx.shadowBlur = sc*14; ctx.shadowColor = col;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(bx, by, sc*3.5, 0, Math.PI*2); ctx.fill();
+      // Colour ring
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(bx, by, sc*2, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+
+    // ── Players ──
+    pdState.players.forEach(p => {
+      const px = p.x*sx, py = p.y*sy;
+      const r  = PD_PRAD * sc;
+
+      // Ground shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.beginPath();
+      ctx.ellipse(px + sc*1.5, py + r*0.65, r*0.9, r*0.25, 0, 0, Math.PI*2);
+      ctx.fill();
+
+      ctx.save();
+      ctx.translate(px, py);
+
+      // Outer glow
+      ctx.shadowBlur = p.isMe ? sc*22 : sc*10;
+      ctx.shadowColor = p.color;
+
+      // Body: layered circles for 3D look
+      // Base dark ring
+      ctx.fillStyle = fbDarken(p.color, 60);
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.fill();
+
+      // Main colour
+      const bodyGrad = ctx.createRadialGradient(-r*0.25, -r*0.3, r*0.05, 0, 0, r);
+      bodyGrad.addColorStop(0, fbLighten(p.color, 70));
+      bodyGrad.addColorStop(0.5, p.color);
+      bodyGrad.addColorStop(1,   fbDarken(p.color, 50));
+      ctx.fillStyle = bodyGrad;
+      ctx.beginPath(); ctx.arc(0, 0, r*0.92, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // White border ring
+      ctx.strokeStyle = p.isMe ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.35)';
+      ctx.lineWidth   = p.isMe ? sc*2.5 : sc*1.2;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.stroke();
+
+      // Visor (helmet look) - dark band across middle
+      ctx.save();
+      ctx.clip(); // clip to circle
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.fillRect(-r, -r*0.12, r*2, r*0.35);
+      // Visor glint
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.fillRect(-r*0.7, -r*0.05, r*1.4, r*0.1);
+      ctx.restore();
+
+      // Gun barrel (direction-aware)
+      const gunAngle = p.facing > 0 ? 0 : Math.PI;
+      ctx.save();
+      ctx.rotate(gunAngle);
+      // Gun body
+      ctx.fillStyle = '#888';
+      ctx.beginPath();
+      ctx.roundRect(r*0.5, -sc*2.5, r*0.9, sc*5, sc*1.5);
+      ctx.fill();
+      // Muzzle flash if recently shot
+      if (p.reloadT > 15) {
+        ctx.shadowBlur = sc*12; ctx.shadowColor = '#ffb700';
+        ctx.fillStyle = '#ffd700';
+        ctx.beginPath(); ctx.arc(r*1.45, 0, sc*4, 0, Math.PI*2); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+      ctx.restore();
+
+      // Specular highlight
+      const hl = ctx.createRadialGradient(-r*0.3, -r*0.38, 0, -r*0.15, -r*0.2, r*0.55);
+      hl.addColorStop(0, 'rgba(255,255,255,0.4)');
+      hl.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = hl;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.fill();
+
+      ctx.restore();
+
+      // ── HP bar above player ──
+      const barW = r*3.2, barH = sc*5, barX = px - barW/2, barY = py - r - sc*14;
+      // Background track
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, barH/2); ctx.fill();
+      // HP fill with colour ramp
+      const hpCol = p.hp > 60 ? '#7bed9f' : p.hp > 30 ? '#ffb700' : '#e94560';
+      ctx.shadowBlur = sc*4; ctx.shadowColor = hpCol;
+      ctx.fillStyle = hpCol;
+      const hpW = Math.max(barH, barW * p.hp/100);
+      ctx.beginPath(); ctx.roundRect(barX, barY, hpW, barH, barH/2); ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Name label
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.font = `bold ${Math.round(sc*8)}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const nameW = ctx.measureText(p.name.slice(0,8)).width + sc*8;
+      ctx.beginPath(); ctx.roundRect(px - nameW/2, barY - sc*12, nameW, sc*10, sc*3); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(p.name.slice(0,8), px, barY - sc*7);
+    });
+
+    // ── Round over banner ──
+    if (pdState.roundOver) {
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillRect(0, ch/2 - sc*28, cw, sc*56);
+      // Gold shimmer line
+      ctx.fillStyle = '#ffd700';
+      ctx.fillRect(0, ch/2 - sc*28, cw, sc*2);
+      ctx.fillRect(0, ch/2 + sc*26, cw, sc*2);
+      ctx.shadowBlur = sc*20; ctx.shadowColor = '#ffd700';
+      ctx.fillStyle = '#ffd700';
+      ctx.font = `bold ${Math.round(sc*22)}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('ROUND OVER!', cw/2, ch/2);
+      ctx.shadowBlur = 0;
     }
   }
 
