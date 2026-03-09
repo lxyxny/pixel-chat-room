@@ -8,7 +8,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Pixel Chat</title>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=1772792213" />
+  <link rel="stylesheet" href="style.css?v=1773055335" />
   <link rel="icon" type="image/png" href="/favicon.png" />
 </head>
 <body>
@@ -324,6 +324,193 @@
 
 
 
+
+  <!-- ═══════════ FULLSCREEN GAME OVERLAY ═══════════ -->
+  <div id="game-overlay" class="game-overlay hidden">
+
+    <!-- LOBBY: pick a game -->
+    <div id="gscreen-lobby" class="gscreen">
+      <div class="gscreen-inner">
+        <h1 class="pixel-title" style="font-size:13px;margin-bottom:6px;">🎮 MINIGAMES</h1>
+        <p class="pixel-hint" style="margin-bottom:20px;">Pick a game to host for your room</p>
+        <div class="game-grid">
+          <button class="game-pick-btn" data-game="football">
+            <span class="gpb-icon">⚽</span>
+            <span class="gpb-name">FOOTBALL</span>
+            <span class="gpb-desc">Real-time physics · WASD to move · Score goals</span>
+          </button>
+          <button class="game-pick-btn" data-game="skribbl">
+            <span class="gpb-icon">🎨</span>
+            <span class="gpb-name">SKRIBBL</span>
+            <span class="gpb-desc">Full drawing canvas · colour tools · guess the word</span>
+          </button>
+          <button class="game-pick-btn" data-game="quiz">
+            <span class="gpb-icon">📚</span>
+            <span class="gpb-name">QUIZ BATTLE</span>
+            <span class="gpb-desc">10 questions · timer bar · MC + free-text · streaks</span>
+          </button>
+          <button class="game-pick-btn" data-game="wordbomb">
+            <span class="gpb-icon">💣</span>
+            <span class="gpb-name">WORD BOMB</span>
+            <span class="gpb-desc">Type words with the prompt · fuse ticks down · boom!</span>
+          </button>
+          <button class="game-pick-btn" data-game="pixelduel">
+            <span class="gpb-icon">🔫</span>
+            <span class="gpb-name">PIXEL DUEL</span>
+            <span class="gpb-desc">1v1 arena · WASD + shoot · first to 3 rounds wins</span>
+          </button>
+        </div>
+        <button id="gclose-btn" class="pixel-btn rounded" style="margin-top:22px;">✕ Close</button>
+      </div>
+    </div>
+
+    <!-- WAITING ROOM -->
+    <div id="gscreen-wait" class="gscreen hidden">
+      <div class="gscreen-inner" style="max-width:480px;">
+        <h2 id="gwait-title" class="pixel-title" style="font-size:12px;margin-bottom:4px;"></h2>
+        <p class="pixel-hint">Others type <b>!join</b> in chat · then click START</p>
+        <div id="gwait-players" class="gwait-players"></div>
+        <p id="gwait-info" class="pixel-hint" style="margin-top:6px;color:var(--pixel-accent);"></p>
+        <div style="display:flex;gap:10px;margin-top:20px;justify-content:center;flex-wrap:wrap;">
+          <button id="gwait-start" class="pixel-btn rounded">▶ START GAME</button>
+          <button id="gwait-back"  class="pixel-btn rounded">← Back</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⚽ FOOTBALL -->
+    <div id="gscreen-football" class="gscreen hidden">
+      <div class="fb-wrap">
+        <div class="fb-hud">
+          <span id="fb-blue-label" class="fb-team-label blue">Blue</span>
+          <span id="fb-score" class="fb-score-num">0 — 0</span>
+          <span id="fb-red-label"  class="fb-team-label red">Red</span>
+          <span id="fb-timer-disp" class="fb-timer">4:00</span>
+          <button id="fb-quit" class="pixel-btn small rounded" style="margin-left:auto;">✕ Quit</button>
+        </div>
+        <canvas id="fb-canvas" style="display:block;width:100%;flex:1;cursor:none;"></canvas>
+        <div class="game-hint-bar">WASD / Arrow keys to move &nbsp;|&nbsp; Push the ball into the opponent's goal</div>
+      </div>
+    </div>
+
+    <!-- 🎨 SKRIBBL -->
+    <div id="gscreen-skribbl" class="gscreen hidden">
+      <div class="sk-wrap">
+        <!-- LEFT: canvas area -->
+        <div class="sk-left">
+          <div class="sk-top-bar">
+            <span id="sk-drawer-label" class="sk-drawer-label">Waiting…</span>
+            <span id="sk-round-info"   class="sk-round-info">Round 0/0</span>
+            <div class="sk-timer-wrap">
+              <div class="sk-timer-track"><div id="sk-bar" class="sk-timer-fill"></div></div>
+              <span id="sk-time-left" class="sk-time-num">60</span>
+            </div>
+            <button id="sk-quit" class="pixel-btn small rounded">✕</button>
+          </div>
+          <div id="sk-word-display" class="sk-word-display"></div>
+          <div class="sk-canvas-wrap">
+            <canvas id="sk-canvas" style="display:block;width:100%;height:100%;cursor:crosshair;"></canvas>
+          </div>
+          <!-- Toolbar: only shown when drawing -->
+          <div id="sk-toolbar" class="sk-toolbar" style="display:none;">
+            <div id="sk-palette" class="sk-palette"></div>
+            <div class="sk-tools">
+              <button id="sk-tool-pen"    class="sk-tool-btn active" title="Pen">✏️</button>
+              <button id="sk-tool-eraser" class="sk-tool-btn" title="Eraser">🧹</button>
+              <button id="sk-tool-fill"   class="sk-tool-btn" title="Bucket Fill">🪣</button>
+            </div>
+            <div class="sk-size-wrap">
+              <label style="font-size:7px;color:var(--pixel-dim);">SIZE</label>
+              <input type="range" id="sk-size-range" min="2" max="40" value="6" style="width:80px;"/>
+            </div>
+            <button id="sk-clear-btn" class="pixel-btn small rounded">🗑️ Clear</button>
+          </div>
+          <!-- Guess input: shown when guessing -->
+          <div id="sk-guess-area" class="sk-guess-area" style="display:none;">
+            <input id="sk-guess-input" class="sk-guess-input" placeholder="Type your guess here…" autocomplete="off" maxlength="40"/>
+            <button id="sk-guess-btn" class="pixel-btn rounded">▶ Guess</button>
+          </div>
+        </div>
+        <!-- RIGHT: scores + guess log -->
+        <div class="sk-right">
+          <div id="sk-scores" class="sk-scores"></div>
+          <div id="sk-guess-log" class="sk-guess-log"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 📚 QUIZ -->
+    <div id="gscreen-quiz" class="gscreen hidden">
+      <div class="qz-wrap">
+        <div class="qz-top">
+          <span id="qz-cat-label" class="qz-cat"></span>
+          <span id="qz-prog" class="qz-prog">Q 1/10</span>
+          <button id="qz-quit" class="pixel-btn small rounded" style="margin-left:auto;">✕ Quit</button>
+        </div>
+        <div class="qz-timer-row">
+          <div class="qz-timer-track"><div id="qz-bar" class="qz-timer-fill"></div></div>
+          <span id="qz-secs" class="qz-secs-num">15</span>
+        </div>
+        <div id="qz-question-text" class="qz-question">Get ready…</div>
+        <div id="qz-options" class="qz-options"></div>
+        <div class="qz-answer-row">
+          <input id="qz-text-input" class="qz-text-input" placeholder="Type your answer here and press Enter…" autocomplete="off" maxlength="60"/>
+          <button id="qz-submit-btn" class="pixel-btn rounded">✓ Submit</button>
+        </div>
+        <div id="qz-feedback" class="qz-feedback"></div>
+        <div class="qz-bottom-row">
+          <div id="qz-scores" class="qz-scores"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 💣 WORD BOMB -->
+    <div id="gscreen-wordbomb" class="gscreen hidden">
+      <div class="wb-wrap">
+        <button id="wb-quit" class="pixel-btn small rounded wb-quit-btn">✕ Quit</button>
+        <h2 class="pixel-title" style="font-size:11px;margin-bottom:4px;">💣 WORD BOMB</h2>
+        <div id="wb-lives-display" class="wb-lives"></div>
+        <div id="wb-bomb-emoji" class="wb-bomb-anim">💣</div>
+        <div class="wb-fuse-wrap">
+          <div class="wb-fuse-track"><div id="wb-fuse-fill" class="wb-fuse-fill"></div></div>
+        </div>
+        <div id="wb-syl" class="wb-prompt">??</div>
+        <p id="wb-whose-turn" class="wb-turn-label">Waiting…</p>
+        <div id="wb-input-row" class="wb-input-row" style="display:none;">
+          <input id="wb-text-input" class="wb-text-input" placeholder="Type a word containing the letters above…" autocomplete="off" maxlength="30"/>
+          <button id="wb-submit-btn" class="pixel-btn rounded">▶ Go</button>
+        </div>
+        <div id="wb-log" class="wb-log"></div>
+      </div>
+    </div>
+
+    <!-- 🔫 PIXEL DUEL -->
+    <div id="gscreen-pixelduel" class="gscreen hidden">
+      <div class="pd-wrap">
+        <div class="pd-hud">
+          <div class="pd-player-hud">
+            <span id="pd-p1-name" class="pd-pname" style="color:#4cc9f0;">P1</span>
+            <div class="pd-hp-track"><div id="pd-p1-hp" class="pd-hp-fill" style="background:#4cc9f0;width:100%;"></div></div>
+            <span id="pd-p1-score" class="pd-score">0</span>
+          </div>
+          <div class="pd-center">
+            <span id="pd-round-label" class="pd-round">Round 1/5</span>
+            <button id="pd-quit" class="pixel-btn small rounded">✕ Quit</button>
+          </div>
+          <div class="pd-player-hud right">
+            <span id="pd-p2-score" class="pd-score">0</span>
+            <div class="pd-hp-track"><div id="pd-p2-hp" class="pd-hp-fill" style="background:#e94560;width:100%;"></div></div>
+            <span id="pd-p2-name" class="pd-pname" style="color:#e94560;">P2</span>
+          </div>
+        </div>
+        <canvas id="pd-canvas" style="display:block;width:100%;flex:1;cursor:none;"></canvas>
+        <div class="game-hint-bar">P1: WASD + J/Enter to shoot &nbsp;|&nbsp; P2: Arrow keys + Ctrl to shoot</div>
+      </div>
+    </div>
+
+  </div><!-- #game-overlay -->
+
+
   <!-- MINIGAME MODAL -->
   <div id="minigame-modal" class="modal hidden">
     <div class="modal-content glass-panel mg-modal-content">
@@ -389,6 +576,6 @@
   </script>
   
   <script src="/socket.io/socket.io.js"></script>
-  <script src="client.js?v=1772792213"></script>
+  <script src="client.js?v=1773055335"></script>
 </body>
 </html>

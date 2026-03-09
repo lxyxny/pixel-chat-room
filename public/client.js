@@ -481,18 +481,8 @@ document.addEventListener('DOMContentLoaded', () => {
       // fall through — still send the original message to the room
     }
 
-    // --- MINIGAME CHAT COMMANDS (!join, !start) ---
-    if (message === '!join' && activeGame && activeGame.state === 'lobby') {
-      if (!activeGame.players.includes(myUsername)) {
-        activeGame.players.push(myUsername);
-        addSystemMessage('✅ You joined the game! (' + activeGame.players.length + ' players)');
-      }
-    }
-    if (message === '!start' && activeGame && activeGame.state === 'lobby' && myRole === 'owner') {
-      startGameRound();
-    }
-    if (activeGame && activeGame.state === 'question') handleQuizAnswer(myUsername, message);
-    if (activeGame && activeGame.state === 'drawing')  handleSkribblGuess(myUsername, message);
+    // --- MINIGAME CHAT COMMANDS ---
+    handleLocalGameMsg(message);
 
     // --- EMIT TO SERVER ---
     socket.emit('chatMessage', { roomName:currentRoom, username:myUsername, message, image, replyTo:pendingReply, avatar:myAvatar });
@@ -745,592 +735,1404 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ===== MINIGAMES =====
+  // All games run in a fullscreen overlay (#game-overlay)
+  // The overlay contains pre-built screens for each game.
+
+  // activeGame declared at line 138
+
+  const GO  = () => document.getElementById('game-overlay');
+  const GS  = id => document.getElementById(id);
+  const $g  = id => document.getElementById(id);
+
+  function goShow(screenId) {
+    GO()?.classList.remove('hidden');
+    document.querySelectorAll('.gscreen').forEach(s => s.classList.add('hidden'));
+    $g(screenId)?.classList.remove('hidden');
+  }
+  function goHide() {
+    GO()?.classList.add('hidden');
+    document.querySelectorAll('.gscreen').forEach(s => s.classList.add('hidden'));
+  }
+
+  // ── Open lobby when host clicks 🎮 ──────────────────────────
   if (minigameBtn) minigameBtn.addEventListener('click', () => {
-    if (myRole !== 'owner') { addSystemMessage('⚠️ Only the room host can start minigames.'); return; }
-    showMinigameLobby();
-  });
-  document.getElementById('close-minigame-btn')?.addEventListener('click', () => {
-    document.getElementById('minigame-modal')?.classList.add('hidden');
+    if (myRole !== 'owner') { addSystemMessage('⚠️ Only the room owner can start minigames.'); return; }
+    goShow('gscreen-lobby');
   });
 
-  function mgModal() { return document.getElementById('minigame-modal'); }
-  function mgBody()  { return document.getElementById('minigame-body'); }
+  $g('gclose-btn')?.addEventListener('click', () => {
+    stopAllGames();
+    goHide();
+  });
 
-  function showMinigameLobby() {
-    if (!mgModal() || !mgBody()) return;
-    mgBody().innerHTML = `
-      <h3 style="text-align:center;margin-bottom:20px;font-size:10px;color:var(--pixel-accent);">🎮 CHOOSE A MINIGAME</h3>
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <button class="pixel-btn rounded mg-pick" data-game="football" style="padding:14px 12px;">
-          ⚽ <strong>FOOTBALL</strong><br/>
-          <span style="font-size:7px;opacity:0.8;">2-6 players · simulated match with halftime &amp; penalties</span>
-        </button>
-        <button class="pixel-btn rounded mg-pick" data-game="quiz" style="padding:14px 12px;">
-          📚 <strong>QUIZ BATTLE</strong><br/>
-          <span style="font-size:7px;opacity:0.8;">1+ players · 10 questions · timer bar · streaks · categories</span>
-        </button>
-        <button class="pixel-btn rounded mg-pick" data-game="skribbl" style="padding:14px 12px;">
-          🎨 <strong>SKRIBBL</strong><br/>
-          <span style="font-size:7px;opacity:0.8;">2+ players · draw &amp; guess · colour palette · word choices</span>
-        </button>
-      </div>
-      <p class="pixel-hint" style="margin-top:14px;text-align:center;">Players type <b>!join</b> in chat, host types <b>!start</b></p>`;
-    mgModal().classList.remove('hidden');
-    mgBody().querySelectorAll('.mg-pick').forEach(btn => btn.addEventListener('click', () => {
-      pickMinigame(btn.dataset.game);
-      mgModal().classList.add('hidden');
-    }));
+  document.querySelectorAll('.game-pick-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const type = btn.dataset.game;
+      startGameLobby(type);
+    });
+  });
+
+  // Legacy modal close
+  document.getElementById('close-minigame-btn')?.addEventListener('click', goHide);
+
+  function startGameLobby(type) {
+    activeGame = {
+      type, state: 'lobby',
+      players: [myUsername],
+      scores: { [myUsername]: 0 },
+      streaks: { [myUsername]: 0 },
+    };
+    const names = { football:'⚽ Football', skribbl:'🎨 Skribbl', quiz:'📚 Quiz Battle', wordbomb:'💣 Word Bomb', pixelduel:'🔫 Pixel Duel' };
+    $g('gwait-title').textContent = names[type] || type;
+    renderWaitList();
+    socket.emit('chatMessage', { roomName:currentRoom, username:myUsername,
+      message:`🎮 [${names[type]}] starting! Everyone type !join — then I'll type !start`, avatar:myAvatar });
+    goShow('gscreen-wait');
   }
 
-  function pickMinigame(type) {
-    activeGame = { type, state:'lobby', players:[myUsername], scores:{}, streaks:{} };
-    activeGame.scores[myUsername]  = 0;
-    activeGame.streaks[myUsername] = 0;
-    addSystemMessage('🎮 ' + type.toUpperCase() + ' starting — type !join to enter, host types !start!');
-    socket.emit('chatMessage',{roomName:currentRoom,username:myUsername,message:'🎮 Minigame: '+type+'! Type !join to play, host types !start.',avatar:myAvatar});
-    if (type==='football') initFootball();
-    else if (type==='quiz')    initQuiz();
-    else if (type==='skribbl') initSkribbl();
-    mgModal().classList.remove('hidden');
+  function renderWaitList() {
+    const el = $g('gwait-players');
+    if (!el || !activeGame) return;
+    el.innerHTML = '';
+    activeGame.players.forEach(p => {
+      const chip = document.createElement('span');
+      chip.className = 'gwait-chip' + (p === myUsername ? ' me' : '');
+      chip.textContent = (p === myUsername ? '👑 ' : '👤 ') + p;
+      el.appendChild(chip);
+    });
+    const info = $g('gwait-info');
+    if (info) info.textContent = activeGame.players.length + ' player(s) waiting…';
   }
 
-  function startGameRound() {
+  $g('gwait-start')?.addEventListener('click', () => {
     if (!activeGame) return;
-    if (activeGame.type==='football') runFootball();
-    else if (activeGame.type==='quiz')    runQuiz();
-    else if (activeGame.type==='skribbl') runSkribbl();
+    launchGame();
+  });
+  $g('gwait-back')?.addEventListener('click', () => {
+    activeGame = null;
+    goShow('gscreen-lobby');
+  });
+
+  function launchGame() {
+    if (!activeGame) return;
+    const t = activeGame.type;
+    addSystemMessage('🎮 ' + t.toUpperCase() + ' — STARTING!');
+    if (t === 'football')  launchFootball();
+    else if (t === 'quiz')      launchQuiz();
+    else if (t === 'skribbl')   launchSkribbl();
+    else if (t === 'wordbomb')  launchWordBomb();
+    else if (t === 'pixelduel') launchPixelDuel();
   }
 
-  function mgLog(msg, cls) {
-    addSystemMessage(msg);
-    const log = document.getElementById('mg-log');
-    if (log) {
-      const d = document.createElement('div');
-      d.className = 'mg-event ' + (cls||'system');
-      d.textContent = msg;
-      log.appendChild(d);
-      log.scrollTop = log.scrollHeight;
+  function stopAllGames() {
+    if (fbRAF)  { cancelAnimationFrame(fbRAF);  fbRAF = null; }
+    if (pdRAF)  { cancelAnimationFrame(pdRAF);  pdRAF = null; }
+    clearTimeout(skTimer); clearInterval(skBarInt);
+    clearTimeout(qzTimer); clearInterval(qzBarInt);
+    clearTimeout(wbTimer); clearInterval(wbFuseInt);
+    activeGame = null;
+  }
+
+  // Route incoming chat messages into active games
+  function handleIncomingGameMsg(username, message) {
+    if (!activeGame) return;
+    if (activeGame.state === 'lobby' && message === '!join') {
+      if (!activeGame.players.includes(username)) {
+        activeGame.players.push(username);
+        activeGame.scores[username]  = 0;
+        activeGame.streaks[username] = 0;
+        renderWaitList();
+        addSystemMessage('✅ ' + username + ' joined! (' + activeGame.players.length + ')');
+      }
     }
+    if (activeGame.state === 'lobby' && message === '!start' && myRole === 'owner') {
+      launchGame();
+    }
+    if (activeGame.state === 'question') handleQuizIncoming(username, message);
+    if (activeGame.state === 'drawing')  handleSkribblIncoming(username, message);
+    if (activeGame.state === 'wordbomb' && activeGame.currentPlayer === username) wbHandleWord(username, message);
   }
 
-  function mgUpdateScoreboard() {
-    const board = document.getElementById('mg-scoreboard');
-    if (!board || !activeGame) return;
-    board.innerHTML = '';
-    const sorted = Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]);
-    sorted.forEach(([p,s]) => {
-      const row = document.createElement('div');
-      row.className = 'mg-lb-row';
-      const rank = sorted.indexOf(sorted.find(x=>x[0]===p));
-      const medal = rank===0?'🥇':rank===1?'🥈':rank===2?'🥉':'  ';
-      row.innerHTML = '<span class="mg-lb-rank">'+medal+'</span><span class="mg-lb-name">'+escapeHtml(p)+'</span><span class="mg-lb-pts">'+s+'</span>';
-      board.appendChild(row);
+  // My own !join / !start also route through here (on send)
+  function handleLocalGameMsg(message) {
+    if (!activeGame) return;
+    if (activeGame.state === 'lobby' && message === '!join') {
+      if (!activeGame.players.includes(myUsername)) {
+        activeGame.players.push(myUsername);
+        activeGame.scores[myUsername]  = 0;
+        activeGame.streaks[myUsername] = 0;
+        renderWaitList();
+        addSystemMessage('✅ You joined! (' + activeGame.players.length + ')');
+      }
+    }
+    if (activeGame.state === 'lobby' && message === '!start' && myRole === 'owner') {
+      launchGame();
+    }
+    if (activeGame.state === 'wordbomb' && activeGame.currentPlayer === myUsername) wbHandleWord(myUsername, message);
+  }
+
+
+  // ═══════════════════════════════════════════════════════════
+  //  ⚽  FOOTBALL  (physics canvas, WASD/arrows to move)
+  //  Inspired by HaxBall — real-time multiplayer via socket
+  // ═══════════════════════════════════════════════════════════
+  let fbRAF = null;
+
+  // Virtual field dimensions (logical coords, canvas scales to fit)
+  const FB_VW = 880, FB_VH = 520;
+  const FB_PRAD = 18, FB_BRAD = 12;
+  const FB_GOAL_H = 140, FB_GOAL_D = 18; // depth of goal area
+  const FB_MATCH_TIME = 240; // seconds
+
+  function launchFootball() {
+    goShow('gscreen-football');
+    activeGame.state = 'playing';
+    activeGame.score = [0, 0];
+    activeGame.timer = FB_MATCH_TIME;
+
+    // Assign team colors
+    const half = Math.ceil(activeGame.players.length / 2);
+    activeGame.teamBlue = activeGame.players.slice(0, half);
+    activeGame.teamRed  = activeGame.players.slice(half);
+
+    // Build physics objects
+    const COLORS = ['#4cc9f0','#7bed9f','#a29bfe','#fd79a8','#ffd700'];
+    const RCOLORS= ['#e94560','#ff7043','#ff9ff3','#ff6b81','#ffb700'];
+    fbState = {
+      ball: { x: FB_VW/2, y: FB_VH/2, vx: 1.5, vy: 0.5, spin: 0 },
+      players: activeGame.players.map((name, i) => {
+        const isBlue = i < half;
+        return {
+          name, isMe: name === myUsername,
+          team: isBlue ? 0 : 1,
+          color: isBlue ? (COLORS[i] || '#4cc9f0') : (RCOLORS[i - half] || '#e94560'),
+          x: isBlue ? 180 + (i % 2) * 60 : FB_VW - 180 - (( i - half) % 2) * 60,
+          y: FB_VH * (0.2 + (i % 3) * 0.3),
+          vx: 0, vy: 0,
+        };
+      }),
+      keys: {},
+      goalFlash: 0,
+      goalMsg: '',
+      over: false,
+    };
+
+    const canvas = $g('fb-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    $g('fb-blue-label').textContent = activeGame.teamBlue.join(' + ');
+    $g('fb-red-label').textContent  = activeGame.teamRed.join(' + ');
+    $g('fb-score').textContent      = '0 — 0';
+    $g('fb-timer-disp').textContent = '4:00';
+
+    // Keyboard
+    const onKD = e => {
+      fbState.keys[e.key] = true;
+      if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+    };
+    const onKU = e => { delete fbState.keys[e.key]; };
+    window.addEventListener('keydown', onKD);
+    window.addEventListener('keyup',   onKU);
+
+    // Resize canvas to container
+    const wrap = canvas.parentElement;
+    function resizeFB() {
+      canvas.width  = wrap.clientWidth;
+      canvas.height = wrap.clientHeight;
+    }
+    resizeFB();
+    window.addEventListener('resize', resizeFB);
+
+    // Match timer
+    const timerInt = setInterval(() => {
+      if (!activeGame || fbState.over) { clearInterval(timerInt); return; }
+      activeGame.timer = Math.max(0, activeGame.timer - 1);
+      const m = Math.floor(activeGame.timer / 60);
+      const s = activeGame.timer % 60;
+      $g('fb-timer-disp').textContent = m + ':' + String(s).padStart(2,'0');
+      if (activeGame.timer <= 0) { clearInterval(timerInt); endFootball(onKD, onKU); }
+    }, 1000);
+
+    // Broadcast my player position
+    const bcInt = setInterval(() => {
+      if (!activeGame || fbState.over) { clearInterval(bcInt); return; }
+      const me = fbState.players.find(p => p.isMe);
+      if (me) socket.emit('gameState', { roomName: currentRoom, game: 'football',
+        payload: { username: myUsername, x: me.x, y: me.y }});
+    }, 50);
+
+    // Quit button
+    const qbtn = $g('fb-quit');
+    const qHandler = () => { clearInterval(timerInt); clearInterval(bcInt); cleanupFB(onKD, onKU); };
+    qbtn?.addEventListener('click', qHandler);
+
+    // Game loop
+    function fbLoop() {
+      if (fbState.over || !activeGame) return;
+      fbTick();
+      fbDraw(ctx, canvas);
+      fbRAF = requestAnimationFrame(fbLoop);
+    }
+    fbRAF = requestAnimationFrame(fbLoop);
+  }
+
+  let fbState = null;
+
+  function fbTick() {
+    if (!fbState) return;
+    const me = fbState.players.find(p => p.isMe);
+    if (me) {
+      const spd = 4.2;
+      const k = fbState.keys;
+      let ax = 0, ay = 0;
+      if (k['a'] || k['A'] || k['ArrowLeft'])  ax -= spd;
+      if (k['d'] || k['D'] || k['ArrowRight']) ax += spd;
+      if (k['w'] || k['W'] || k['ArrowUp'])    ay -= spd;
+      if (k['s'] || k['S'] || k['ArrowDown'])  ay += spd;
+      // Diagonal normalise
+      if (ax && ay) { ax *= 0.707; ay *= 0.707; }
+      me.vx = me.vx * 0.75 + ax * 0.25;
+      me.vy = me.vy * 0.75 + ay * 0.25;
+      me.x  = Math.max(FB_PRAD, Math.min(FB_VW - FB_PRAD, me.x + me.vx));
+      me.y  = Math.max(FB_PRAD, Math.min(FB_VH - FB_PRAD, me.y + me.vy));
+    }
+
+    // Ball physics
+    const b = fbState.ball;
+    b.x  += b.vx;
+    b.y  += b.vy;
+    b.vx *= 0.984;
+    b.vy *= 0.984;
+    b.spin *= 0.98;
+
+    // Wall collisions (with goal gaps)
+    const gTop = (FB_VH - FB_GOAL_H) / 2;
+    const gBot = gTop + FB_GOAL_H;
+
+    // Left wall / left goal
+    if (b.x - FB_BRAD < FB_GOAL_D) {
+      if (b.y >= gTop && b.y <= gBot) {
+        // Goal for Red team!
+        if (b.x < 0) { fbScoreGoal(1); return; }
+      } else {
+        b.x = FB_GOAL_D + FB_BRAD;
+        b.vx = Math.abs(b.vx) * 0.8;
+      }
+    }
+    // Right wall / right goal
+    if (b.x + FB_BRAD > FB_VW - FB_GOAL_D) {
+      if (b.y >= gTop && b.y <= gBot) {
+        if (b.x > FB_VW) { fbScoreGoal(0); return; }
+      } else {
+        b.x = FB_VW - FB_GOAL_D - FB_BRAD;
+        b.vx = -Math.abs(b.vx) * 0.8;
+      }
+    }
+    if (b.y - FB_BRAD < 0)       { b.y = FB_BRAD;         b.vy =  Math.abs(b.vy) * 0.8; }
+    if (b.y + FB_BRAD > FB_VH)   { b.y = FB_VH - FB_BRAD; b.vy = -Math.abs(b.vy) * 0.8; }
+
+    // Player-ball collision
+    fbState.players.forEach(p => {
+      const dx = b.x - p.x, dy = b.y - p.y;
+      const dist = Math.hypot(dx, dy);
+      const minD = FB_PRAD + FB_BRAD;
+      if (dist < minD && dist > 0.1) {
+        const nx = dx / dist, ny = dy / dist;
+        const relVx = b.vx - p.vx, relVy = b.vy - p.vy;
+        const imp = (relVx * nx + relVy * ny);
+        if (imp < 0) {
+          const force = Math.max(3, Math.hypot(p.vx, p.vy) + 2.5);
+          b.vx += nx * force * 1.4;
+          b.vy += ny * force * 1.4;
+          b.spin = (nx * p.vy - ny * p.vx) * 0.3;
+        }
+        const overlap = minD - dist;
+        b.x += nx * overlap;
+        b.y += ny * overlap;
+      }
+    });
+
+    // Player-player collision
+    for (let i = 0; i < fbState.players.length; i++) {
+      for (let j = i + 1; j < fbState.players.length; j++) {
+        const a = fbState.players[i], bb2 = fbState.players[j];
+        const dx = bb2.x - a.x, dy = bb2.y - a.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < FB_PRAD * 2 && dist > 0.1) {
+          const nx = dx/dist, ny = dy/dist;
+          const overlap = (FB_PRAD * 2 - dist) / 2;
+          if (a.isMe || !bb2.isMe) { a.x -= nx * overlap; a.y -= ny * overlap; }
+          if (bb2.isMe || !a.isMe) { bb2.x += nx * overlap; bb2.y += ny * overlap; }
+        }
+      }
+    }
+
+    if (fbState.goalFlash > 0) fbState.goalFlash--;
+  }
+
+  function fbScoreGoal(scoringTeam) {
+    if (!activeGame || !fbState) return;
+    activeGame.score[scoringTeam]++;
+    const blueScore = activeGame.score[0], redScore = activeGame.score[1];
+    $g('fb-score').textContent = blueScore + ' — ' + redScore;
+    const scorer = scoringTeam === 0 ? activeGame.teamBlue : activeGame.teamRed;
+    const scorerName = scorer[Math.floor(Math.random() * scorer.length)];
+    fbState.goalMsg = '⚽ GOAL! ' + scorerName + '!';
+    fbState.goalFlash = 120;
+    addSystemMessage('⚽ GOAL! ' + scorerName + '! Score: ' + blueScore + ' — ' + redScore);
+    // Reset positions
+    fbState.ball = { x: FB_VW/2, y: FB_VH/2, vx: (Math.random()-.5)*3, vy: (Math.random()-.5)*2, spin:0 };
+    fbState.players.forEach((p, i) => {
+      const half = Math.ceil(activeGame.players.length / 2);
+      p.x = p.team === 0 ? 180 + (i % 2)*60 : FB_VW - 180 - ((i - half) % 2)*60;
+      p.y = FB_VH * (0.25 + (i % 3)*0.25);
+      p.vx = 0; p.vy = 0;
     });
   }
 
-  // ─── FOOTBALL ───────────────────────────────────────────────
-  const FB_EVENTS = [
-    {w:.25,text:'{p} GOAL! {action}',       cls:'goal',    goal:true},
-    {w:.15,text:'{p} Shot saved! {save}',    cls:'save'},
-    {w:.12,text:'{p} dribbles past two!',    cls:'save'},
-    {w:.08,text:'{p} skies it over the bar.',cls:'save'},
-    {w:.08,text:'Foul on {p}! Yellow card.', cls:'foul',    foul:true},
-    {w:.06,text:'{p} PENALTY awarded!',      cls:'penalty', pen:true},
-    {w:.06,text:'Corner to {team}.',         cls:'save'},
-    {w:.05,text:'Offside! Play stops.',      cls:'system'},
-    {w:.05,text:'{p} brilliant cross, cleared.',cls:'save'},
-    {w:.10,text:'{p} long range effort, just wide.',cls:'save'},
+  function fbDraw(ctx, canvas) {
+    if (!fbState) return;
+    const cw = canvas.width, ch = canvas.height;
+    const sx = cw / FB_VW, sy = ch / FB_VH;
+
+    // Field background with stripes
+    ctx.fillStyle = '#2d7a2d';
+    ctx.fillRect(0, 0, cw, ch);
+    for (let i = 0; i < 8; i++) {
+      ctx.fillStyle = i % 2 ? 'rgba(0,0,0,0.07)' : 'transparent';
+      ctx.fillRect(i * cw/8, 0, cw/8, ch);
+    }
+
+    // Field lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 2;
+    // Border
+    ctx.strokeRect(sx*30, sy*20, cw - sx*60, ch - sy*40);
+    // Centre line
+    ctx.beginPath(); ctx.moveTo(cw/2, sy*20); ctx.lineTo(cw/2, ch-sy*20); ctx.stroke();
+    // Centre circle
+    ctx.beginPath(); ctx.arc(cw/2, ch/2, sx*70, 0, Math.PI*2); ctx.stroke();
+    // Centre dot
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath(); ctx.arc(cw/2, ch/2, 4, 0, Math.PI*2); ctx.fill();
+
+    // Goals
+    const gTop = (ch - FB_GOAL_H*sy)/2, gH = FB_GOAL_H*sy, gD = FB_GOAL_D*sx;
+    // Left goal (red scores here)
+    ctx.fillStyle = 'rgba(76,201,240,0.15)';
+    ctx.fillRect(0, gTop, gD, gH);
+    ctx.strokeStyle = '#4cc9f0';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(0, gTop, gD, gH);
+    // Right goal (blue scores here)
+    ctx.fillStyle = 'rgba(233,69,96,0.15)';
+    ctx.fillRect(cw - gD, gTop, gD, gH);
+    ctx.strokeStyle = '#e94560';
+    ctx.strokeRect(cw - gD, gTop, gD, gH);
+
+    // Players
+    fbState.players.forEach(p => {
+      const px = p.x * sx, py = p.y * sy, r = FB_PRAD * sx;
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath(); ctx.ellipse(px, py + r + 3, r*0.8, r*0.3, 0, 0, Math.PI*2); ctx.fill();
+      // Body
+      const grad = ctx.createRadialGradient(px-r*0.3, py-r*0.3, r*0.1, px, py, r);
+      grad.addColorStop(0, lightenColor(p.color, 40));
+      grad.addColorStop(1, p.color);
+      ctx.fillStyle = grad;
+      ctx.shadowBlur = p.isMe ? 16 : 6;
+      ctx.shadowColor = p.color;
+      ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
+      // Outline
+      ctx.strokeStyle = p.isMe ? '#fff' : 'rgba(0,0,0,0.4)';
+      ctx.lineWidth = p.isMe ? 2.5 : 1;
+      ctx.stroke();
+      // Name tag
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.round(r*0.55)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(p.name.slice(0, 4), px, py);
+    });
+
+    // Ball
+    const bx = fbState.ball.x * sx, by = fbState.ball.y * sy, br = FB_BRAD * sx;
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(fbState.ball.spin);
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(2, br+3, br*0.9, br*0.35, 0, 0, Math.PI*2); ctx.fill();
+    // Ball
+    ctx.fillStyle = '#fff';
+    ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(255,255,255,0.8)';
+    ctx.beginPath(); ctx.arc(0, 0, br, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // Ball pattern
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.arc(br*0.3, -br*0.3, br*0.25, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-br*0.35, br*0.2, br*0.22, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    // Goal flash
+    if (fbState.goalFlash > 0) {
+      const alpha = Math.min(1, fbState.goalFlash / 40);
+      ctx.fillStyle = `rgba(255,230,0,${alpha * 0.25})`;
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+      ctx.font = `bold ${Math.round(cw/12)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(fbState.goalMsg, cw/2, ch/2);
+    }
+  }
+
+  function lightenColor(hex, amount) {
+    const r = Math.min(255, parseInt(hex.slice(1,3),16)+amount);
+    const g = Math.min(255, parseInt(hex.slice(3,5),16)+amount);
+    const b = Math.min(255, parseInt(hex.slice(5,7),16)+amount);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function endFootball(onKD, onKU) {
+    if (!fbState) return;
+    fbState.over = true;
+    cancelAnimationFrame(fbRAF); fbRAF = null;
+    window.removeEventListener('keydown', onKD);
+    window.removeEventListener('keyup',   onKU);
+    const [b, r] = activeGame.score;
+    const msg = b > r ? activeGame.teamBlue.join('+') + ' WIN! 🏆' : r > b ? activeGame.teamRed.join('+') + ' WIN! 🏆' : 'DRAW! 🤝';
+    addSystemMessage('🏁 FULL TIME: Blue ' + b + ' — ' + r + ' Red  |  ' + msg);
+    // Draw final screen on canvas
+    const canvas = $g('fb-canvas'), ctx = canvas?.getContext('2d');
+    if (ctx && canvas) {
+      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle = '#ffd700';
+      ctx.font = `bold ${Math.round(canvas.width/14)}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('FULL TIME', canvas.width/2, canvas.height/2 - 24);
+      ctx.fillStyle = '#fff';
+      ctx.font = `${Math.round(canvas.width/18)}px sans-serif`;
+      ctx.fillText('Blue ' + b + ' — ' + r + ' Red', canvas.width/2, canvas.height/2 + 20);
+      ctx.font = `${Math.round(canvas.width/22)}px sans-serif`;
+      ctx.fillText(msg, canvas.width/2, canvas.height/2 + 60);
+    }
+    activeGame = null;
+    setTimeout(goHide, 5000);
+  }
+
+  function cleanupFB(onKD, onKU) {
+    fbState = null;
+    cancelAnimationFrame(fbRAF); fbRAF = null;
+    window.removeEventListener('keydown', onKD);
+    window.removeEventListener('keyup',   onKU);
+    activeGame = null;
+    goHide();
+  }
+
+  // Receive opponents' positions
+  socket.on('gameState', data => {
+    if (data.game === 'football' && fbState) {
+      const p = fbState.players.find(p => p.name === data.payload.username && !p.isMe);
+      if (p) { p.x = data.payload.x; p.y = data.payload.y; }
+    }
+    if (data.game === 'pixelduel' && pdState) {
+      const p = pdState.players.find(p => p.name === data.payload.username && !p.isMe);
+      if (p) { p.x=data.payload.x; p.y=data.payload.y; p.hp=data.payload.hp??p.hp; }
+    }
+  });
+
+
+  // ═══════════════════════════════════════════════════════════
+  //  🎨  SKRIBBL  (full canvas draw + guess UI)
+  // ═══════════════════════════════════════════════════════════
+  const SK_COLORS = [
+    '#000000','#3d3d3d','#7a7a7a','#c8c8c8','#ffffff',
+    '#e94560','#ff6b35','#ffb700','#ffe066','#7bed9f',
+    '#4cc9f0','#0077ff','#6c5ce7','#fd79a8','#a29bfe',
+    '#00b894','#55efc4','#6d4c41','#ff9ff3','#ffeaa7',
   ];
-  const FB_GOALS   = ['curls it in the top corner!','taps it home from close range!','thunderous volley!','chips the keeper beautifully!','headers it powerfully!','penalty kick — scores!'];
-  const FB_SAVES   = ['the keeper tips it over!','blocked by the defender!','hits the post!','comfortable save.','cleared off the line!'];
+  const SK_WORDS_BY_CAT = {
+    '🐾 Animals':  ['cat','dog','shark','elephant','penguin','dragon','spider','jellyfish','giraffe','octopus','parrot','rhino','scorpion','platypus','narwhal'],
+    '🏠 Objects':  ['guitar','telescope','umbrella','scissors','lighthouse','hourglass','compass','lantern','anchor','trophy','backpack','microscope','parachute','magnifying glass'],
+    '🌍 Places':   ['volcano','castle','pyramid','igloo','treehouse','submarine','spaceship','windmill','skyscraper','cave','colosseum','great wall','eiffel tower'],
+    '🍕 Food':     ['pizza','sushi','burger','taco','waffle','spaghetti','dumpling','pretzel','cupcake','hotdog','baguette','churro','fondue','pineapple'],
+    '🏃 Actions':  ['dancing','surfing','climbing','juggling','swimming','flying','boxing','fishing','painting','skateboarding','diving','sneezing','yawning'],
+    '⚡ Tech':     ['robot','keyboard','satellite','microchip','drone','virtual reality','laser','radar','calculator','3D printer','smartwatch'],
+  };
 
-  function weightedPick(arr) {
-    const tot = arr.reduce((s,x)=>s+(x.w||1),0);
-    let r = Math.random()*tot;
-    for (const x of arr) { r -= (x.w||1); if (r<=0) return x; }
-    return arr[arr.length-1];
-  }
+  let skTool='pen', skColor='#000000', skSize=6, skIsDrawing=false;
+  let skTimer=null, skBarInt=null, skTimeLeft=60, skCtx=null, skCanvas=null;
 
-  function initFootball() {
-    showGamePanel(`
-      <div class="mg-game-header">
-        <span style="font-size:10px;">⚽ FOOTBALL</span>
-        <span id="mg-matchtime" style="font-size:8px;color:var(--pixel-dim);">Pre-match</span>
-      </div>
-      <div class="mg-score-board" id="mg-fb-scores">
-        <div class="mg-score-card" id="fb-card-a"><div class="score-name" id="fb-name-a">Team A</div><div class="score-val" id="fb-sc-a">0</div></div>
-        <div style="font-size:18px;align-self:center;">—</div>
-        <div class="mg-score-card" id="fb-card-b"><div class="score-name" id="fb-name-b">Team B</div><div class="score-val" id="fb-sc-b">0</div></div>
-      </div>
-      <div class="football-field" id="mg-log" style="height:160px;overflow-y:auto;"></div>
-      <p id="mg-joined" class="pixel-hint" style="margin-top:6px;">Players: <b>${myUsername}</b></p>
-      <p class="pixel-hint">Type !join to enter · Host types !start (min 2)</p>`);
-  }
+  function launchSkribbl() {
+    goShow('gscreen-skribbl');
+    activeGame.drawers = [...activeGame.players].sort(() => Math.random()-0.5);
+    activeGame.drawerIdx = 0;
+    activeGame.round = 0;
+    activeGame.guessedThisRound = new Set();
+    activeGame.players.forEach(p => { activeGame.scores[p]=0; });
 
-  function runFootball() {
-    if (!activeGame || activeGame.players.length < 2) { addSystemMessage('⚠️ Need at least 2 players.'); activeGame.state='lobby'; return; }
-    const mid = Math.ceil(activeGame.players.length/2);
-    activeGame.teamA    = activeGame.players.slice(0, mid);
-    activeGame.teamB    = activeGame.players.slice(mid);
-    activeGame.score    = {A:0, B:0};
-    activeGame.minute   = 0;
-    activeGame.cards    = {};
-    activeGame.state    = 'playing';
-    activeGame.half     = 1;
-    const aN = activeGame.teamA.map(p=>p.split('')[0]+'XI').join('/');
-    const bN = activeGame.teamB.map(p=>p.split('')[0]+'XI').join('/');
-    if (document.getElementById('fb-name-a')) document.getElementById('fb-name-a').textContent = activeGame.teamA.join('+');
-    if (document.getElementById('fb-name-b')) document.getElementById('fb-name-b').textContent = activeGame.teamB.join('+');
-    mgLog('🟢 KICK OFF! ' + activeGame.teamA.join(', ') + ' vs ' + activeGame.teamB.join(', '), 'system');
-    scheduleFootballEvent(0);
-  }
+    skCanvas = $g('sk-canvas');
+    skCtx    = skCanvas?.getContext('2d');
+    if (!skCanvas || !skCtx) return;
 
-  function scheduleFootballEvent(minute) {
-    if (!activeGame || activeGame.type!=='football') return;
-    const delay = 800 + Math.random()*600;
-    setTimeout(()=>footballEvent(minute), delay);
-  }
+    buildSkPalette();
+    setupSkToolbar();
+    setupSkCanvas();
+    setupSkGuessInput();
+    renderSkScores();
 
-  function footballEvent(minute) {
-    if (!activeGame || activeGame.type!=='football') return;
-    activeGame.minute = minute;
-    const el = document.getElementById('mg-matchtime');
-    if (el) el.textContent = minute + "'";
-
-    // Halftime at 45
-    if (minute===45 && activeGame.half===1) {
-      activeGame.half = 2;
-      mgLog('--- HALF TIME: A '+activeGame.score.A+' - '+activeGame.score.B+' B ---','system');
-      setTimeout(()=>{ mgLog('--- SECOND HALF BEGINS ---','system'); scheduleFootballEvent(46); }, 2000);
-      return;
-    }
-    if (minute >= 90) { endFootball(); return; }
-
-    const isA  = Math.random() < 0.5;
-    const team = isA ? activeGame.teamA : activeGame.teamB;
-    const key  = isA ? 'A' : 'B';
-    const p    = team[Math.floor(Math.random()*team.length)];
-    const ev   = weightedPick(FB_EVENTS);
-
-    let msg = ev.text.replace('{p}', p).replace('{team}', 'Team '+key)
-      .replace('{action}', FB_GOALS[Math.floor(Math.random()*FB_GOALS.length)])
-      .replace('{save}', FB_SAVES[Math.floor(Math.random()*FB_SAVES.length)]);
-
-    if (ev.goal) {
-      activeGame.score[key]++;
-      if (document.getElementById('fb-sc-'+key.toLowerCase())) document.getElementById('fb-sc-'+key.toLowerCase()).textContent = activeGame.score[key];
-      // Highlight winning team card
-      const cards = document.querySelectorAll('.mg-score-card');
-      cards.forEach(c => c.classList.remove('winning'));
-      if (activeGame.score.A !== activeGame.score.B) {
-        const winner = activeGame.score.A > activeGame.score.B ? 'fb-card-a' : 'fb-card-b';
-        document.getElementById(winner)?.classList.add('winning');
-      }
-    }
-    if (ev.foul) { activeGame.cards[p] = (activeGame.cards[p]||0)+1; if(activeGame.cards[p]>=2){msg+=' '+p+' gets a RED card!';} }
-    if (ev.pen) {
-      // Penalty: 70% chance
-      msg += Math.random()<.7 ? ' → SCORES from the spot!' : ' → Penalty MISSED!';
-      if (msg.includes('SCORES')) { activeGame.score[key]++; if(document.getElementById('fb-sc-'+key.toLowerCase())) document.getElementById('fb-sc-'+key.toLowerCase()).textContent=activeGame.score[key]; }
-    }
-
-    mgLog(minute + "' " + msg, ev.cls);
-    scheduleFootballEvent(minute + 2 + Math.floor(Math.random()*4));
-  }
-
-  function endFootball() {
-    if (!activeGame) return;
-    const {A,B} = activeGame.score;
-    if (A===B) {
-      mgLog('--- FULL TIME: A '+A+' - '+B+' B — DRAW! Going to penalties! ---','system');
-      setTimeout(penaltyShootout, 1500);
+    if (activeGame.players.length >= 2) {
+      skNextRound();
     } else {
-      const winner = A>B ? activeGame.teamA : activeGame.teamB;
-      mgLog('🏁 FULL TIME: A '+A+' - '+B+' B  —  ' + winner.join('+') + ' WIN! 🏆','system');
-      activeGame = null;
+      // Solo practice
+      addSystemMessage('⚠️ Solo mode — ask others to !join then !start for multiplayer.');
+      skNextRound();
     }
   }
 
-  function penaltyShootout() {
-    if (!activeGame) return;
-    mgLog('🥅 PENALTY SHOOTOUT begins!','system');
-    let round=0, scA=0, scB=0;
-    const maxRounds=5;
-    function shoot() {
-      if (!activeGame) return;
-      round++;
-      if (round>maxRounds) {
-        if (scA===scB) { mgLog('Still level after 5 each — Sudden Death!','system'); }
-        const wKey = scA>scB?'A':'B';
-        const wTeam= wKey==='A'?activeGame.teamA:activeGame.teamB;
-        mgLog('🏆 Penalty winner: ' + wTeam.join('+') + '! (' + scA + '-' + scB + ')','goal');
-        activeGame=null; return;
-      }
-      const pA = activeGame.teamA[Math.floor(Math.random()*activeGame.teamA.length)];
-      const pB = activeGame.teamB[Math.floor(Math.random()*activeGame.teamB.length)];
-      const gA = Math.random()<.75; const gB = Math.random()<.75;
-      if(gA) scA++; if(gB) scB++;
-      mgLog(round+'. ' + pA+': '+(gA?'✅ SCORES!':'❌ Missed.')+'  '+pB+': '+(gB?'✅ SCORES!':'❌ Missed.')+'  ('+scA+'-'+scB+')', gA||gB?'goal':'save');
-      setTimeout(shoot, 1400);
-    }
-    shoot();
-  }
-
-  // ─── QUIZ ───────────────────────────────────────────────────
-  const QUIZ_POOL = [
-    {q:'What is 7 × 8?',                           a:'56',          cat:'🔢 Maths'},
-    {q:'Capital of France?',                        a:'paris',       cat:'🌍 Geography'},
-    {q:'How many sides on a hexagon?',              a:'6',           cat:'🔢 Maths'},
-    {q:'Gas plants absorb from the air?',           a:'co2',         cat:'🔬 Science'},
-    {q:'Who wrote Romeo and Juliet?',               a:'shakespeare', cat:'📖 Literature'},
-    {q:'Largest planet in the solar system?',       a:'jupiter',     cat:'🔭 Astronomy'},
-    {q:'How many bones in the human body?',         a:'206',         cat:'🔬 Science'},
-    {q:'What year did WW2 end?',                    a:'1945',        cat:'📜 History'},
-    {q:'Chemical symbol for gold?',                 a:'au',          cat:'🔬 Science'},
-    {q:'Planet closest to the Sun?',                a:'mercury',     cat:'🔭 Astronomy'},
-    {q:'How many continents are there?',            a:'7',           cat:'🌍 Geography'},
-    {q:'Who painted the Mona Lisa?',                a:'da vinci',    cat:'🎨 Art'},
-    {q:'What is the square root of 144?',           a:'12',          cat:'🔢 Maths'},
-    {q:'Capital of Japan?',                         a:'tokyo',       cat:'🌍 Geography'},
-    {q:'How many strings on a guitar?',             a:'6',           cat:'🎵 Music'},
-    {q:'What is H2O?',                              a:'water',       cat:'🔬 Science'},
-    {q:'Longest river in the world?',               a:'nile',        cat:'🌍 Geography'},
-    {q:'How many keys on a standard piano?',        a:'88',          cat:'🎵 Music'},
-    {q:'In what year did the Titanic sink?',        a:'1912',        cat:'📜 History'},
-    {q:'Who invented the telephone?',               a:'bell',        cat:'📜 History'},
-    {q:'Speed of sound in air (m/s approx)?',       a:'343',         cat:'🔬 Science'},
-    {q:'What is the powerhouse of the cell?',       a:'mitochondria',cat:'🔬 Science'},
-    {q:'Capital of Australia?',                     a:'canberra',    cat:'🌍 Geography'},
-    {q:'How many players in a rugby union team?',   a:'15',          cat:'⚽ Sport'},
-    {q:'What sport uses a shuttlecock?',            a:'badminton',   cat:'⚽ Sport'},
-  ];
-
-  let quizTimer=null, quizBarTimer=null;
-  const QUIZ_TIME=18;
-
-  function initQuiz() {
-    activeGame.questions=[...QUIZ_POOL].sort(()=>Math.random()-.5).slice(0,10);
-    activeGame.qIdx=0; activeGame.answered=false;
-    activeGame.players.forEach(p=>{activeGame.scores[p]=0;activeGame.streaks[p]=0;});
-    showGamePanel(`
-      <div class="mg-game-header">
-        <span style="font-size:10px;">📚 QUIZ BATTLE</span>
-        <span id="qz-progress" style="font-size:8px;color:var(--pixel-dim);">Q 0/10</span>
-      </div>
-      <div class="mg-timer-bar-wrap"><div class="mg-timer-bar" id="qz-timer-bar" style="width:100%"></div></div>
-      <div id="qz-question" class="mg-question-box" style="min-height:50px;">Waiting to start…</div>
-      <div class="mg-leaderboard" id="mg-scoreboard"></div>
-      <div id="mg-log" class="mg-log" style="max-height:100px;margin-top:8px;"></div>
-      <p class="pixel-hint" style="margin-top:6px;">Type !join to enter · Host types !start</p>`);
-    mgUpdateScoreboard();
-  }
-
-  function runQuiz() {
-    activeGame.players.forEach(p=>{if(!activeGame.scores[p])activeGame.scores[p]=0;if(!activeGame.streaks[p])activeGame.streaks[p]=0;});
-    mgLog('📚 QUIZ START! Answer in chat — first correct gets points!','system');
-    askQuestion();
-  }
-
-  function askQuestion() {
-    if (!activeGame||activeGame.qIdx>=activeGame.questions.length){endQuiz();return;}
-    clearTimeout(quizTimer); clearInterval(quizBarTimer);
-    const q=activeGame.questions[activeGame.qIdx];
-    activeGame.currentAnswer=q.a.toLowerCase().replace(/\s+/g,'');
-    activeGame.answered=false;
-    activeGame.state='question';
-    activeGame.qStart=Date.now();
-    activeGame.qTime=QUIZ_TIME;
-
-    const qEl=document.getElementById('qz-question');
-    const prog=document.getElementById('qz-progress');
-    if (qEl) qEl.innerHTML='<div class="mg-category-badge" style="background:rgba(76,201,240,0.15);border:1px solid #4cc9f0;color:#4cc9f0;">'+q.cat+'</div><br/>'+escapeHtml(q.q);
-    if (prog) prog.textContent='Q '+(activeGame.qIdx+1)+'/'+activeGame.questions.length;
-
-    // Timer bar animation
-    const bar=document.getElementById('qz-timer-bar');
-    if (bar) { bar.style.transition='none'; bar.style.width='100%'; bar.className='mg-timer-bar'; }
-    setTimeout(()=>{
-      if (bar) { bar.style.transition='width '+QUIZ_TIME+'s linear'; bar.style.width='0%'; }
-    },50);
-
-    let remaining=QUIZ_TIME;
-    quizBarTimer=setInterval(()=>{
-      remaining--;
-      if (bar) {
-        if (remaining<=5) bar.className='mg-timer-bar danger';
-        else if (remaining<=9) bar.className='mg-timer-bar warn';
-      }
-      if (remaining<=0) clearInterval(quizBarTimer);
-    },1000);
-
-    quizTimer=setTimeout(()=>{
-      if (!activeGame||activeGame.answered) return;
-      clearInterval(quizBarTimer);
-      mgLog('⏰ Time\'s up! Answer: '+q.a,'system');
-      // Reset streaks
-      activeGame.players.forEach(p=>{activeGame.streaks[p]=0;});
-      activeGame.qIdx++; setTimeout(askQuestion,1800);
-    }, QUIZ_TIME*1000);
-  }
-
-  function handleQuizAnswer(username,msg) {
-    if (!activeGame||activeGame.type!=='quiz'||activeGame.answered||activeGame.state!=='question') return;
-    const norm=msg.toLowerCase().replace(/\s+/g,'');
-    // Allow partial match for long answers (>=5 chars)
-    const ans=activeGame.currentAnswer;
-    const match = norm===ans || (ans.length>=5 && norm.length>=3 && ans.startsWith(norm));
-    if (!match) return;
-    clearTimeout(quizTimer); clearInterval(quizBarTimer);
-    activeGame.answered=true;
-    const elapsed=Math.floor((Date.now()-activeGame.qStart)/1000);
-    const speedBonus=Math.max(0, QUIZ_TIME-elapsed);
-    const streak=(activeGame.streaks[username]||0)+1;
-    activeGame.streaks[username]=streak;
-    const streakBonus=Math.min(streak-1,3);
-    const pts=1+Math.floor(speedBonus/6)+streakBonus;
-    activeGame.scores[username]=(activeGame.scores[username]||0)+pts;
-    let msg2='✅ '+username+' got it! (+'+pts+' pts';
-    if (streakBonus>0) msg2+=' 🔥×'+streak+' streak';
-    msg2+=')';
-    mgLog(msg2,'goal');
-    // Reset everyone else's streak
-    activeGame.players.forEach(p=>{if(p!==username)activeGame.streaks[p]=0;});
-    mgUpdateScoreboard();
-    activeGame.qIdx++;
-    setTimeout(askQuestion,1600);
-  }
-
-  function endQuiz() {
-    if (!activeGame) return;
-    mgLog('━━━━ FINAL SCORES ━━━━','system');
-    Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]).forEach(([p,s],i)=>{
-      mgLog((i===0?'🥇':i===1?'🥈':i===2?'🥉':'  ')+' '+p+': '+s+' pts','system');
-    });
-    activeGame=null;
-  }
-
-  // ─── SKRIBBL ────────────────────────────────────────────────
-  const WORD_CATEGORIES = {
-    animals:  ['cat','dog','shark','elephant','penguin','dragon','spider','jellyfish','crocodile','giraffe'],
-    objects:  ['guitar','telescope','umbrella','scissors','lighthouse','hourglass','compass','lantern','anchor','trophy'],
-    places:   ['volcano','castle','pyramid','igloo','treehouse','submarine','spaceship','windmill','skyscraper','cave'],
-    food:     ['pizza','sushi','burger','taco','waffle','spaghetti','dumpling','pretzel','cupcake','hotdog'],
-    actions:  ['dancing','surfing','climbing','juggling','swimming','sleeping','flying','boxing','fishing','painting'],
-  };
-  let skribblTimeout=null, currentColor='#e94560', currentSize=5, eraserMode=false;
-  const SK_PALETTE=['#e94560','#ff8c00','#ffb700','#4cc9f0','#7bed9f','#ffffff','#a29bfe','#fd79a8','#2d3436','#6c5ce7','#00b894','#fdcb6e'];
-
-  function initSkribbl() {
-    activeGame.drawers=[...activeGame.players].sort(()=>Math.random()-.5);
-    activeGame.drawerIdx=0;
-    activeGame.players.forEach(p=>{activeGame.scores[p]=0;activeGame.streaks[p]=0;});
-    showGamePanel(`
-      <div class="mg-game-header">
-        <span style="font-size:10px;">🎨 SKRIBBL</span>
-        <span id="sk-progress" style="font-size:8px;color:var(--pixel-dim);">Round 0/${activeGame.drawers.length}</span>
-      </div>
-      <div class="mg-timer-bar-wrap"><div class="mg-timer-bar" id="sk-timer-bar" style="width:100%"></div></div>
-      <div id="sk-word-display" class="mg-word-display"></div>
-      <canvas id="skribbl-canvas" width="400" height="220" style="display:none;border:2px solid var(--pixel-border);border-radius:8px;background:#fff;cursor:crosshair;touch-action:none;width:100%;margin-top:6px;"></canvas>
-      <div id="sk-guesser-hint" style="display:none;text-align:center;padding:8px;font-size:8px;color:var(--pixel-dim);">Guess the word in chat!</div>
-      <div id="sk-tools" class="skribbl-tools-row" style="display:none;">
-        <div class="skribbl-palette" id="sk-palette"></div>
-        <input type="range" id="sk-size-range" min="2" max="28" value="5" style="width:70px;"/>
-        <button class="pixel-btn small rounded" id="sk-eraser" title="Eraser">⬜</button>
-        <button class="pixel-btn small rounded" onclick="window.skClear()">🗑️</button>
-        <span id="sk-word-label" style="font-size:8px;color:var(--pixel-accent);margin-left:4px;"></span>
-      </div>
-      <div class="mg-leaderboard" id="mg-scoreboard" style="margin-top:8px;"></div>
-      <div id="mg-log" class="mg-log" style="max-height:80px;margin-top:6px;"></div>
-      <p class="pixel-hint" style="margin-top:6px;">Type !join to enter · Host types !start (min 2)</p>`);
-
-    // Build palette
-    const pal = document.getElementById('sk-palette');
-    if (pal) {
-      SK_PALETTE.forEach(c => {
-        const sw = document.createElement('div');
-        sw.className='sk-color-swatch'+(c===currentColor?' active':'');
-        sw.style.background=c;
-        sw.addEventListener('click',()=>{
-          currentColor=c; eraserMode=false;
-          document.querySelectorAll('.sk-color-swatch').forEach(s=>s.classList.remove('active'));
-          sw.classList.add('active');
-          document.getElementById('sk-eraser')?.classList.remove('active');
-        });
-        pal.appendChild(sw);
+  function buildSkPalette() {
+    const pal = $g('sk-palette');
+    if (!pal) return;
+    pal.innerHTML = '';
+    SK_COLORS.forEach(c => {
+      const sw = document.createElement('div');
+      sw.className = 'sk-swatch' + (c === skColor ? ' active' : '');
+      sw.style.background = c;
+      sw.addEventListener('click', () => {
+        skColor = c; skTool = 'pen';
+        pal.querySelectorAll('.sk-swatch').forEach(s => s.classList.remove('active'));
+        sw.classList.add('active');
+        setSkTool('pen');
       });
-    }
-    const sizeRange=document.getElementById('sk-size-range');
-    if (sizeRange) sizeRange.addEventListener('input',e=>{currentSize=parseInt(e.target.value);});
-    const eraserBtn=document.getElementById('sk-eraser');
-    if (eraserBtn) eraserBtn.addEventListener('click',()=>{
-      eraserMode=!eraserMode;
-      eraserBtn.classList.toggle('active',eraserMode);
+      pal.appendChild(sw);
     });
-    mgUpdateScoreboard();
   }
 
-  const SK_TIME=60;
-  function runSkribbl() {
-    if (!activeGame||activeGame.players.length<2){addSystemMessage('⚠️ Need at least 2 players.');activeGame.state='lobby';return;}
-    activeGame.players.forEach(p=>{if(!activeGame.scores[p])activeGame.scores[p]=0;});
-    mgLog('🎨 SKRIBBL! Guess in chat. Drawer: draw your word!','system');
-    skribblRound();
+  function setSkTool(t) {
+    skTool = t;
+    document.querySelectorAll('.sk-tool-btn').forEach(b => b.classList.remove('active'));
+    $g('sk-tool-' + t)?.classList.add('active');
   }
 
-  function skribblRound() {
-    if (!activeGame||activeGame.drawerIdx>=activeGame.drawers.length){endSkribbl();return;}
-    clearTimeout(skribblTimeout);
-    const drawer=activeGame.drawers[activeGame.drawerIdx];
-    // Pick word from random category
-    const cats=Object.keys(WORD_CATEGORIES);
-    const cat=cats[Math.floor(Math.random()*cats.length)];
-    const pool=WORD_CATEGORIES[cat];
-    activeGame.currentWord=pool[Math.floor(Math.random()*pool.length)];
-    activeGame.drawerName=drawer;
-    activeGame.guessed=false;
-    activeGame.state='drawing';
-    activeGame.roundStart=Date.now();
-    const isMe=drawer===myUsername;
-    const prog=document.getElementById('sk-progress');
-    if (prog) prog.textContent='Round '+(activeGame.drawerIdx+1)+'/'+activeGame.drawers.length;
+  function setupSkToolbar() {
+    $g('sk-tool-pen')?.addEventListener('click',    () => setSkTool('pen'));
+    $g('sk-tool-eraser')?.addEventListener('click', () => setSkTool('eraser'));
+    $g('sk-tool-fill')?.addEventListener('click',   () => setSkTool('fill'));
+    $g('sk-size-range')?.addEventListener('input', e => { skSize = parseInt(e.target.value); });
+    $g('sk-clear-btn')?.addEventListener('click', () => {
+      if (skCtx && skCanvas) {
+        skCtx.fillStyle = '#ffffff';
+        skCtx.fillRect(0, 0, skCanvas.width, skCanvas.height);
+      }
+    });
+  }
 
-    // Word display — blanks for guessers, revealed for drawer
-    renderWordBlanks(activeGame.currentWord, isMe);
-    mgLog('🖊️ ' + drawer + ' is drawing! Category: '+cat,'system');
-
-    const canvas=document.getElementById('skribbl-canvas');
-    const tools=document.getElementById('sk-tools');
-    const hint=document.getElementById('sk-guesser-hint');
-    const wordLabel=document.getElementById('sk-word-label');
-
-    if (canvas) {
-      canvas.style.display=isMe?'block':'none';
-      if (isMe) { const ctx=canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); setupSkribblCanvas(canvas,ctx); }
+  function setupSkCanvas() {
+    if (!skCanvas || !skCtx) return;
+    const wrap = skCanvas.parentElement;
+    function resizeSk() {
+      const w = wrap.clientWidth, h = wrap.clientHeight;
+      // preserve drawing
+      const tmp = document.createElement('canvas');
+      tmp.width = skCanvas.width; tmp.height = skCanvas.height;
+      tmp.getContext('2d').drawImage(skCanvas, 0, 0);
+      skCanvas.width = w; skCanvas.height = h;
+      skCtx.fillStyle = '#fff'; skCtx.fillRect(0,0,w,h);
+      skCtx.drawImage(tmp, 0, 0, w, h);
     }
-    if (tools)  tools.style.display=isMe?'flex':'none';
-    if (hint)   hint.style.display=isMe?'none':'block';
-    if (wordLabel&&isMe) wordLabel.textContent='Word: '+activeGame.currentWord.toUpperCase();
+    resizeSk();
+    window.addEventListener('resize', resizeSk);
+    skCtx.fillStyle = '#fff'; skCtx.fillRect(0,0,skCanvas.width,skCanvas.height);
 
-    // Timer bar
-    const bar=document.getElementById('sk-timer-bar');
-    if (bar){bar.style.transition='none';bar.style.width='100%';bar.className='mg-timer-bar';}
-    setTimeout(()=>{if(bar){bar.style.transition='width '+SK_TIME+'s linear';bar.style.width='0%';}},50);
+    let lx=0, ly=0;
+    const isDrawer = () => activeGame?.drawerName === myUsername;
+    const getPos = e => {
+      const r = skCanvas.getBoundingClientRect();
+      const src = e.touches ? e.touches[0] : e;
+      return { x:(src.clientX-r.left)*(skCanvas.width/r.width), y:(src.clientY-r.top)*(skCanvas.height/r.height) };
+    };
+    const startDraw = e => {
+      if (!isDrawer()) return;
+      skIsDrawing = true;
+      const p = getPos(e);
+      if (skTool === 'fill') {
+        skFloodFill(Math.round(p.x), Math.round(p.y), skColor);
+        skIsDrawing = false; return;
+      }
+      lx = p.x; ly = p.y;
+      skCtx.beginPath(); skCtx.moveTo(lx,ly);
+    };
+    const doDraw = e => {
+      if (!skIsDrawing || !isDrawer()) return;
+      e.preventDefault();
+      const p = getPos(e);
+      skCtx.globalCompositeOperation = skTool==='eraser' ? 'destination-out' : 'source-over';
+      skCtx.strokeStyle = skTool==='eraser' ? 'rgba(0,0,0,1)' : skColor;
+      skCtx.lineWidth   = skTool==='eraser' ? skSize*3 : skSize;
+      skCtx.lineCap = 'round'; skCtx.lineJoin = 'round';
+      skCtx.lineTo(p.x,p.y); skCtx.stroke();
+      skCtx.beginPath(); skCtx.moveTo(p.x,p.y);
+      lx=p.x; ly=p.y;
+      skCtx.globalCompositeOperation = 'source-over';
+    };
+    const stopDraw = () => { skIsDrawing=false; };
+    skCanvas.addEventListener('mousedown',  startDraw);
+    skCanvas.addEventListener('mousemove',  doDraw);
+    skCanvas.addEventListener('mouseup',    stopDraw);
+    skCanvas.addEventListener('mouseleave', stopDraw);
+    skCanvas.addEventListener('touchstart', e=>{e.preventDefault();startDraw(e);},{passive:false});
+    skCanvas.addEventListener('touchmove',  e=>{e.preventDefault();doDraw(e);},{passive:false});
+    skCanvas.addEventListener('touchend',   stopDraw);
+  }
 
-    let rem=SK_TIME;
-    const barTick=setInterval(()=>{
-      rem--;
-      if(bar){if(rem<=10)bar.className='mg-timer-bar danger';else if(rem<=20)bar.className='mg-timer-bar warn';}
-      if(rem<=0)clearInterval(barTick);
+  function skFloodFill(sx, sy, fillColor) {
+    const w = skCanvas.width, h = skCanvas.height;
+    const img = skCtx.getImageData(0,0,w,h), d = img.data;
+    const fi = (x,y)=>(y*w+x)*4;
+    const tr=d[fi(sx,sy)],tg=d[fi(sx,sy)+1],tb=d[fi(sx,sy)+2];
+    const fc = parseInt(fillColor.replace('#',''),16);
+    const fr=(fc>>16)&255,fg=(fc>>8)&255,fb2=fc&255;
+    if(tr===fr&&tg===fg&&tb===fb2)return;
+    const stack=[[sx,sy]];
+    const seen=new Uint8Array(w*h);
+    const match=(x,y)=>{
+      const i=fi(x,y);
+      return Math.abs(d[i]-tr)<40&&Math.abs(d[i+1]-tg)<40&&Math.abs(d[i+2]-tb)<40;
+    };
+    while(stack.length){
+      const [x,y]=stack.pop();
+      if(x<0||x>=w||y<0||y>=h||seen[y*w+x]||!match(x,y))continue;
+      seen[y*w+x]=1;
+      const i=fi(x,y); d[i]=fr;d[i+1]=fg;d[i+2]=fb2;d[i+3]=255;
+      stack.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);
+    }
+    skCtx.putImageData(img,0,0);
+  }
+
+  function setupSkGuessInput() {
+    const input = $g('sk-guess-input'), btn = $g('sk-guess-btn');
+    if (!input || !btn) return;
+    const submit = () => {
+      const val = input.value.trim();
+      if (!val) return;
+      input.value = '';
+      addSkGuessLine(myUsername, val, 'normal');
+      socket.emit('chatMessage',{roomName:currentRoom,username:myUsername,message:val,avatar:myAvatar});
+      handleSkribblIncoming(myUsername, val);
+    };
+    btn.onclick = submit;
+    input.addEventListener('keypress', e => { if(e.key==='Enter') submit(); });
+  }
+
+  function skNextRound() {
+    if (!activeGame) return;
+    clearTimeout(skTimer); clearInterval(skBarInt);
+    if (activeGame.drawerIdx >= activeGame.drawers.length) { endSkribbl(); return; }
+
+    // Clear canvas
+    if (skCtx && skCanvas) {
+      skCtx.fillStyle='#fff'; skCtx.fillRect(0,0,skCanvas.width,skCanvas.height);
+    }
+
+    activeGame.drawerName = activeGame.drawers[activeGame.drawerIdx];
+    activeGame.round++;
+    activeGame.guessedThisRound = new Set();
+    activeGame.state = 'drawing';
+
+    // Pick word
+    const cats = Object.keys(SK_WORDS_BY_CAT);
+    const cat  = cats[Math.floor(Math.random()*cats.length)];
+    activeGame.currentWord = SK_WORDS_BY_CAT[cat][Math.floor(Math.random()*SK_WORDS_BY_CAT[cat].length)];
+    activeGame.roundStart  = Date.now();
+
+    const isMe = activeGame.drawerName === myUsername;
+    $g('sk-round-info').textContent = 'Round ' + activeGame.round + '/' + activeGame.drawers.length;
+    $g('sk-drawer-label').textContent = (isMe ? '✏️ You are drawing!' : '👀 ' + activeGame.drawerName + ' is drawing!');
+
+    const toolbar = $g('sk-toolbar');
+    const guessArea = $g('sk-guess-area');
+    if (toolbar)   toolbar.style.display  = isMe ? 'flex' : 'none';
+    if (guessArea) guessArea.style.display = isMe ? 'none' : 'flex';
+    const guessInput = $g('sk-guess-input');
+    if (guessInput) { guessInput.disabled = isMe; guessInput.placeholder = isMe ? 'You are drawing!' : 'Type your guess…'; }
+
+    renderSkWordDisplay(activeGame.currentWord, isMe);
+
+    if (isMe) {
+      addSkGuessLine('🎮', 'Your word: ' + activeGame.currentWord.toUpperCase() + ' | Category: ' + cat, 'system');
+    } else {
+      addSkGuessLine('🎮', activeGame.drawerName + ' is drawing! Guess in the box below.', 'system');
+    }
+    renderSkScores();
+
+    // Timer
+    skTimeLeft = 60;
+    $g('sk-time-left').textContent = '60';
+    const bar = $g('sk-bar');
+    if (bar) { bar.style.transition='none'; bar.style.width='100%'; bar.style.background='#4cc9f0'; }
+    setTimeout(()=>{ if(bar){bar.style.transition='width 60s linear';bar.style.width='0%';} },80);
+
+    clearInterval(skBarInt);
+    skBarInt = setInterval(()=>{
+      skTimeLeft--;
+      $g('sk-time-left').textContent = skTimeLeft;
+      if (bar) {
+        if(skTimeLeft<=10) bar.style.background='#e94560';
+        else if(skTimeLeft<=20) bar.style.background='#ffb700';
+      }
+      if(skTimeLeft<=0){ clearInterval(skBarInt); skTimeUp(); }
     },1000);
-
-    skribblTimeout=setTimeout(()=>{
-      clearInterval(barTick);
-      if(!activeGame||activeGame.guessed)return;
-      mgLog("⏰ Time's up! Word was: "+activeGame.currentWord,'system');
-      revealWord(activeGame.currentWord);
-      activeGame.drawerIdx++;
-      if(canvas)canvas.style.display='none';
-      if(tools)tools.style.display='none';
-      if(hint)hint.style.display='none';
-      setTimeout(skribblRound,2000);
-    }, SK_TIME*1000);
+    clearTimeout(skTimer);
+    skTimer = setTimeout(skTimeUp, 62000);
   }
 
-  function renderWordBlanks(word, reveal) {
-    const el=document.getElementById('sk-word-display');
+  function renderSkWordDisplay(word, reveal) {
+    const row = $g('sk-word-display');
+    if (!row) return;
+    row.innerHTML = '';
+    word.split('').forEach(ch => {
+      const el = document.createElement('div');
+      if (ch === ' ') {
+        el.className = 'sk-blank space'; el.textContent = ' ';
+      } else {
+        el.className = 'sk-blank';
+        el.textContent = reveal ? ch.toUpperCase() : '';
+      }
+      row.appendChild(el);
+    });
+  }
+
+  function revealSkWord() {
+    const row = $g('sk-word-display');
+    if (!row || !activeGame?.currentWord) return;
+    const blanks = row.querySelectorAll('.sk-blank:not(.space)');
+    activeGame.currentWord.replace(/ /g,'').split('').forEach((ch,i)=>{
+      if(blanks[i]) blanks[i].textContent=ch.toUpperCase();
+    });
+  }
+
+  function addSkGuessLine(user, text, type) {
+    const el = $g('sk-guess-log');
     if (!el) return;
-    el.innerHTML='';
-    word.split('').forEach(ch=>{
-      const box=document.createElement('div');
-      box.className='mg-letter-box'+(reveal?' revealed':'');
-      box.textContent=reveal?ch.toUpperCase():ch===' '?'⠀':'';
-      if (!reveal&&ch!==' ') box.style.color='transparent';
-      el.appendChild(box);
+    const d = document.createElement('div');
+    d.className = 'sk-guess-line ' + type;
+    d.innerHTML = `<span class="sk-guess-user">${escapeHtml(user)}</span> ${escapeHtml(text)}`;
+    el.appendChild(d);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function renderSkScores() {
+    const el = $g('sk-scores');
+    if (!el || !activeGame) return;
+    el.innerHTML = '<div class="sk-scores-title">🏆 Scores</div>';
+    const medals = ['🥇','🥈','🥉'];
+    Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]).forEach(([p,s],i)=>{
+      const row = document.createElement('div');
+      row.className = 'sk-score-row' + (p===myUsername?' me':'');
+      row.innerHTML = `<span>${medals[i]||''} ${escapeHtml(p)}</span><span class="sk-score-pts">${s}</span>`;
+      el.appendChild(row);
     });
   }
 
-  function revealWord(word) {
-    const boxes=document.querySelectorAll('.mg-letter-box');
-    word.split('').forEach((ch,i)=>{
-      if(boxes[i]){boxes[i].textContent=ch.toUpperCase();boxes[i].classList.add('revealed');boxes[i].style.color='';}
-    });
+  function handleSkribblIncoming(username, msg) {
+    if (!activeGame||activeGame.state!=='drawing'||username===activeGame.drawerName) return;
+    if (activeGame.guessedThisRound?.has(username)) return;
+    const guess = msg.toLowerCase().trim();
+    const word  = activeGame.currentWord.toLowerCase();
+    const exact = guess === word;
+    const close = !exact && word.length>=4 && levenshtein(guess,word)===1;
+    if (exact) {
+      activeGame.guessedThisRound.add(username);
+      const elapsed = Math.floor((Date.now()-activeGame.roundStart)/1000);
+      const pts = Math.max(1, Math.floor((60-elapsed)/10)+2);
+      activeGame.scores[username]=(activeGame.scores[username]||0)+pts;
+      activeGame.scores[activeGame.drawerName]=(activeGame.scores[activeGame.drawerName]||0)+1;
+      addSkGuessLine(username,'✅ GUESSED IT! (+'+pts+' pts)','correct');
+      revealSkWord();
+      renderSkScores();
+      const guessers = activeGame.players.filter(p=>p!==activeGame.drawerName);
+      if(guessers.every(p=>activeGame.guessedThisRound.has(p))){
+        addSkGuessLine('🎮','Everyone guessed! Next round…','system');
+        activeGame.drawerIdx++;
+        clearTimeout(skTimer);clearInterval(skBarInt);
+        setTimeout(skNextRound,2200);
+      }
+    } else if (close) {
+      addSkGuessLine(username, '"'+msg+'" — so close! 🔥','close');
+    } else {
+      addSkGuessLine(username, msg, 'normal');
+    }
   }
 
-  function setupSkribblCanvas(canvas,ctx) {
-    let drawing=false;
-    const pos=e=>{
-      const r=canvas.getBoundingClientRect();
-      const src=e.touches?e.touches[0]:e;
-      return{x:(src.clientX-r.left)*(canvas.width/r.width),y:(src.clientY-r.top)*(canvas.height/r.height)};
-    };
-    const startDraw=e=>{
-      drawing=true;
-      const p=pos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y);
-    };
-    const doDraw=e=>{
-      if(!drawing)return; e.preventDefault();
-      ctx.globalCompositeOperation=eraserMode?'destination-out':'source-over';
-      ctx.strokeStyle=eraserMode?'rgba(0,0,0,1)':currentColor;
-      ctx.lineWidth=eraserMode?currentSize*2.5:currentSize;
-      ctx.lineCap='round'; ctx.lineJoin='round';
-      const p=pos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(p.x,p.y);
-    };
-    const stopDraw=()=>{drawing=false;ctx.globalCompositeOperation='source-over';};
-    canvas.onmousedown=canvas.ontouchstart=startDraw;
-    canvas.onmousemove=canvas.ontouchmove=doDraw;
-    canvas.onmouseup=canvas.onmouseleave=canvas.ontouchend=stopDraw;
-  }
-
-  window.skClear=function(){
-    const c=document.getElementById('skribbl-canvas');
-    if(c){const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);}
-  };
-
-  function handleSkribblGuess(username,msg) {
-    if(!activeGame||activeGame.type!=='skribbl'||activeGame.guessed||username===activeGame.drawerName||activeGame.state!=='drawing')return;
-    // Close guess detection (Levenshtein distance 1 for words >=5 chars)
-    const guess=msg.toLowerCase().trim();
-    const word=activeGame.currentWord.toLowerCase();
-    if (guess!==word && !(word.length>=5 && levenshtein(guess,word)<=1)) return;
-    clearTimeout(skribblTimeout);
-    activeGame.guessed=true;
-    const elapsed=Math.floor((Date.now()-activeGame.roundStart)/1000);
-    const speedPts=Math.max(1, Math.floor((SK_TIME-elapsed)/10)+1);
-    activeGame.scores[username]=(activeGame.scores[username]||0)+speedPts+1;
-    activeGame.scores[activeGame.drawerName]=(activeGame.scores[activeGame.drawerName]||0)+1;
-    mgLog('✅ '+username+' guessed it! Word: '+activeGame.currentWord+' (+'+( speedPts+1)+' pts)','goal');
-    revealWord(activeGame.currentWord);
-    mgUpdateScoreboard();
+  function skTimeUp() {
+    clearTimeout(skTimer); clearInterval(skBarInt);
+    if(!activeGame||activeGame.state!=='drawing') return;
+    addSkGuessLine('⏰','Time\'s up! Word was: '+activeGame.currentWord.toUpperCase(),'system');
+    revealSkWord();
+    renderSkScores();
     activeGame.drawerIdx++;
-    const canvas=document.getElementById('skribbl-canvas'),tools=document.getElementById('sk-tools'),hint=document.getElementById('sk-guesser-hint');
-    if(canvas)canvas.style.display='none';if(tools)tools.style.display='none';if(hint)hint.style.display='none';
-    setTimeout(skribblRound,2000);
-  }
-
-  function levenshtein(a,b){
-    const m=a.length,n=b.length,dp=Array.from({length:m+1},(_,i)=>Array.from({length:n+1},(_,j)=>i?j?0:i:j));
-    for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]:1+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]);
-    return dp[m][n];
+    setTimeout(skNextRound, 2500);
   }
 
   function endSkribbl() {
+    clearTimeout(skTimer); clearInterval(skBarInt);
     if(!activeGame)return;
-    mgLog('🎨 GAME OVER! Final Leaderboard:','system');
-    Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]).forEach(([p,s],i)=>{
-      mgLog((i===0?'🥇':i===1?'🥈':i===2?'🥉':'  ')+' '+p+': '+s+' pts','system');
-    });
+    const sorted=Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]);
+    addSystemMessage('🎨 Skribbl over! Winner: '+(sorted[0]?.[0]||'?')+' with '+(sorted[0]?.[1]||0)+' pts!');
+    renderSkScores();
     activeGame=null;
+    setTimeout(goHide,5000);
   }
 
-  // ─── SHARED GAME UTILS ──────────────────────────────────────
-  function showGamePanel(html) {
-    const modal=mgModal(), body=mgBody();
-    if(body) body.innerHTML=html;
-    if(modal) modal.classList.remove('hidden');
+  $g('sk-quit')?.addEventListener('click',()=>{ stopAllGames(); goHide(); });
+
+
+  // ═══════════════════════════════════════════════════════════
+  //  📚  QUIZ BATTLE  (fullscreen with visible answer input)
+  // ═══════════════════════════════════════════════════════════
+  const QZ_BANK = [
+    {q:'What is 7 × 8?',                          a:['56'],              cat:'🔢 Maths',     mc:['42','54','56','64']},
+    {q:'What is √144?',                            a:['12'],              cat:'🔢 Maths',     mc:['11','12','13','14']},
+    {q:'How many sides does a hexagon have?',      a:['6'],               cat:'🔢 Maths',     mc:['5','6','7','8']},
+    {q:'What is 15% of 200?',                      a:['30'],              cat:'🔢 Maths',     mc:['20','25','30','35']},
+    {q:'What is 2 to the power of 10?',            a:['1024'],            cat:'🔢 Maths',     mc:['512','1000','1024','2048']},
+    {q:'Capital of France?',                       a:['paris'],           cat:'🌍 Geography', mc:['Lyon','Nice','Paris','Bordeaux']},
+    {q:'Capital of Japan?',                        a:['tokyo'],           cat:'🌍 Geography', mc:['Osaka','Kyoto','Nagoya','Tokyo']},
+    {q:'Capital of Australia?',                    a:['canberra'],        cat:'🌍 Geography', mc:['Sydney','Melbourne','Brisbane','Canberra']},
+    {q:'Longest river in the world?',              a:['nile'],            cat:'🌍 Geography', mc:['Amazon','Nile','Yangtze','Mississippi']},
+    {q:'How many continents?',                     a:['7'],               cat:'🌍 Geography', mc:['5','6','7','8']},
+    {q:'What gas do plants absorb?',               a:['co2','carbon dioxide'], cat:'🔬 Science', mc:['O₂','N₂','CO₂','H₂']},
+    {q:'The powerhouse of the cell?',              a:['mitochondria'],    cat:'🔬 Science',   mc:['Nucleus','Ribosome','Mitochondria','Golgi']},
+    {q:'H₂O is the chemical formula for?',         a:['water'],           cat:'🔬 Science',   mc:['Hydrogen','Water','Salt','Oxygen']},
+    {q:'Speed of sound in air (m/s approx)?',      a:['343'],             cat:'🔬 Science',   mc:['220','343','450','670']},
+    {q:'Bones in the human body?',                 a:['206'],             cat:'🔬 Science',   mc:['196','206','216','226']},
+    {q:'Chemical symbol for Gold?',                a:['au'],              cat:'🔬 Science',   mc:['Go','Gd','Au','Gl']},
+    {q:'What year did WW2 end?',                   a:['1945'],            cat:'📜 History',   mc:['1943','1944','1945','1946']},
+    {q:'Who invented the telephone?',              a:['bell','alexander graham bell'], cat:'📜 History', mc:['Edison','Bell','Tesla','Marconi']},
+    {q:'Titanic sank in what year?',               a:['1912'],            cat:'📜 History',   mc:['1908','1910','1912','1914']},
+    {q:'Who wrote Romeo and Juliet?',              a:['shakespeare'],     cat:'📖 Literature',mc:['Dickens','Shakespeare','Austen','Milton']},
+    {q:'Strings on a standard guitar?',            a:['6'],               cat:'🎵 Music',     mc:['4','5','6','7']},
+    {q:'Keys on a standard piano?',                a:['88'],              cat:'🎵 Music',     mc:['76','82','88','92']},
+    {q:'What sport uses a shuttlecock?',           a:['badminton'],       cat:'⚽ Sport',     mc:['Tennis','Squash','Badminton','Pickleball']},
+    {q:'Players in a rugby union team?',           a:['15'],              cat:'⚽ Sport',     mc:['11','13','15','16']},
+    {q:'Largest planet in our solar system?',      a:['jupiter'],         cat:'🔭 Space',     mc:['Saturn','Jupiter','Neptune','Uranus']},
+    {q:'Planet closest to the Sun?',               a:['mercury'],         cat:'🔭 Space',     mc:['Venus','Mercury','Earth','Mars']},
+    {q:'How many moons does Mars have?',           a:['2'],               cat:'🔭 Space',     mc:['0','1','2','4']},
+  ];
+
+  let qzTimer=null, qzBarInt=null, qzTimeLeft=15, qzMyAnswered=false;
+  const QZ_TIME=15;
+
+  function launchQuiz() {
+    goShow('gscreen-quiz');
+    activeGame.state   = 'quiz-idle';
+    activeGame.qBank   = [...QZ_BANK].sort(()=>Math.random()-.5).slice(0,10);
+    activeGame.qIdx    = 0;
+    activeGame.players.forEach(p=>{activeGame.scores[p]=0;activeGame.streaks[p]=0;});
+    setupQzInput();
+    renderQzScores();
+    $g('qz-question-text').textContent='Get ready…';
+    $g('qz-options').innerHTML='';
+    $g('qz-feedback').textContent='';
+    $g('qz-feedback').className='qz-feedback';
+    setTimeout(qzNextQuestion, 1200);
   }
 
-  // ===== SOCKET EVENTS =====
+  function setupQzInput() {
+    const input=$g('qz-text-input'), btn=$g('qz-submit-btn');
+    if(!input||!btn)return;
+    input.value=''; input.disabled=false; input.focus();
+    const submit=()=>{
+      const val=input.value.trim();
+      if(!val||qzMyAnswered||activeGame?.state!=='question')return;
+      input.value='';
+      handleQuizIncoming(myUsername,val);
+    };
+    btn.onclick=submit;
+    input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();submit();}};
+  }
+
+  function qzNextQuestion() {
+    if(!activeGame||activeGame.qIdx>=activeGame.qBank.length){endQuiz();return;}
+    clearTimeout(qzTimer);clearInterval(qzBarInt);
+    const q=activeGame.qBank[activeGame.qIdx];
+    activeGame.state='question';
+    activeGame.currentAnswers=q.a.map(a=>a.toLowerCase().replace(/\s+/g,''));
+    activeGame.qStart=Date.now();
+    qzMyAnswered=false;
+    qzTimeLeft=QZ_TIME;
+
+    $g('qz-cat-label').textContent=q.cat;
+    $g('qz-prog').textContent='Q '+(activeGame.qIdx+1)+'/'+activeGame.qBank.length;
+    $g('qz-question-text').textContent=q.q;
+    const fb=$g('qz-feedback');fb.textContent='';fb.className='qz-feedback';
+    const inp=$g('qz-text-input');if(inp){inp.disabled=false;inp.value='';inp.focus();}
+
+    // Multiple choice buttons
+    const optsEl=$g('qz-options');
+    optsEl.innerHTML='';
+    if(q.mc){
+      const shuffled=[...q.mc].sort(()=>Math.random()-.5);
+      shuffled.forEach(opt=>{
+        const btn=document.createElement('button');
+        btn.className='qz-opt-btn';
+        btn.textContent=opt;
+        btn.onclick=()=>{
+          if(qzMyAnswered||activeGame?.state!=='question')return;
+          document.querySelectorAll('.qz-opt-btn').forEach(b=>b.classList.add('disabled'));
+          btn.classList.add('selected');
+          const inp=$g('qz-text-input');if(inp)inp.value=opt;
+          handleQuizIncoming(myUsername,opt);
+        };
+        optsEl.appendChild(btn);
+      });
+    }
+
+    // Timer bar
+    const bar=$g('qz-bar');
+    $g('qz-secs').textContent=QZ_TIME;
+    if(bar){bar.style.transition='none';bar.style.width='100%';bar.style.background='#4cc9f0';}
+    setTimeout(()=>{ if(bar){bar.style.transition='width '+QZ_TIME+'s linear';bar.style.width='0%';} },60);
+
+    clearInterval(qzBarInt);
+    qzBarInt=setInterval(()=>{
+      qzTimeLeft--;
+      $g('qz-secs').textContent=qzTimeLeft;
+      if(bar){ if(qzTimeLeft<=4)bar.style.background='#e94560';else if(qzTimeLeft<=8)bar.style.background='#ffb700'; }
+      if(qzTimeLeft<=0){clearInterval(qzBarInt);qzTimeUp();}
+    },1000);
+    clearTimeout(qzTimer);
+    qzTimer=setTimeout(qzTimeUp,(QZ_TIME+1)*1000);
+  }
+
+  function qzTimeUp(){
+    clearTimeout(qzTimer);clearInterval(qzBarInt);
+    if(!activeGame||activeGame.state!=='question')return;
+    const q=activeGame.qBank[activeGame.qIdx];
+    const fb=$g('qz-feedback');
+    if(fb){fb.className='qz-feedback wrong';fb.textContent='⏰ Time\'s up! Answer was: '+q.a[0].toUpperCase();}
+    const inp=$g('qz-text-input');if(inp)inp.disabled=true;
+    document.querySelectorAll('.qz-opt-btn').forEach(btn=>{
+      if(q.a.some(a=>btn.textContent.toLowerCase()===a.toLowerCase()))btn.classList.add('correct');
+    });
+    activeGame.players.forEach(p=>{activeGame.streaks[p]=0;});
+    renderQzScores();
+    activeGame.qIdx++;
+    setTimeout(qzNextQuestion,2600);
+  }
+
+  function handleQuizIncoming(username,msg){
+    if(!activeGame||activeGame.state!=='question')return;
+    const norm=msg.toLowerCase().replace(/\s+/g,'');
+    const hit=activeGame.currentAnswers?.some(a=>norm===a||(a.length>=4&&levenshtein(norm,a)<=1));
+    if(!hit)return;
+    const isMe=username===myUsername;
+    if(isMe&&qzMyAnswered)return;
+    if(isMe)qzMyAnswered=true;
+
+    const elapsed=Math.floor((Date.now()-activeGame.qStart)/1000);
+    const speed=Math.max(0,QZ_TIME-elapsed);
+    const streak=(activeGame.streaks[username]||0)+1;
+    activeGame.streaks[username]=streak;
+    const pts=1+Math.floor(speed/5)+Math.min(streak-1,3);
+    activeGame.scores[username]=(activeGame.scores[username]||0)+pts;
+    activeGame.players.forEach(p=>{if(p!==username)activeGame.streaks[p]=0;});
+
+    if(isMe){
+      clearTimeout(qzTimer);clearInterval(qzBarInt);
+      const fb=$g('qz-feedback');
+      if(fb){fb.className='qz-feedback correct';fb.textContent='✅ Correct! +'+pts+' pts'+(streak>1?' 🔥 Streak ×'+streak:'');}
+      const inp=$g('qz-text-input');if(inp)inp.disabled=true;
+      // highlight correct MC option
+      const q=activeGame.qBank[activeGame.qIdx];
+      document.querySelectorAll('.qz-opt-btn').forEach(btn=>{
+        if(q.a.some(a=>btn.textContent.toLowerCase()===a.toLowerCase()))btn.classList.add('correct');
+        else if(btn.classList.contains('selected'))btn.classList.add('wrong');
+      });
+      renderQzScores();
+      activeGame.qIdx++;
+      setTimeout(qzNextQuestion,2200);
+    } else {
+      // Another player got it first — show in log
+      const fb=$g('qz-feedback');
+      if(fb&&!qzMyAnswered){fb.className='qz-feedback info';fb.textContent=username+' got it first! +'+pts+' pts';}
+      renderQzScores();
+    }
+  }
+
+  function renderQzScores(){
+    const el=$g('qz-scores');if(!el||!activeGame)return;
+    el.innerHTML='';
+    const medals=['🥇','🥈','🥉'];
+    Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]).forEach(([p,s],i)=>{
+      const row=document.createElement('div');
+      row.className='qz-score-row'+(p===myUsername?' me':'');
+      row.innerHTML=`<span>${medals[i]||'  '} ${escapeHtml(p)}</span><span class="qz-pts">${s}${activeGame.streaks[p]>1?' 🔥':''}`;
+      el.appendChild(row);
+    });
+  }
+
+  function endQuiz(){
+    clearTimeout(qzTimer);clearInterval(qzBarInt);
+    if(!activeGame)return;
+    const sorted=Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]);
+    $g('qz-question-text').textContent='🏁 Game Over!';
+    $g('qz-options').innerHTML='';
+    const fb=$g('qz-feedback');if(fb){fb.className='qz-feedback correct';fb.textContent='Winner: '+(sorted[0]?.[0]||'?')+' with '+(sorted[0]?.[1]||0)+' pts!';}
+    addSystemMessage('📚 Quiz done! Winner: '+(sorted[0]?.[0]||'?')+' — '+(sorted[0]?.[1]||0)+' pts');
+    activeGame=null;
+    setTimeout(goHide,6000);
+  }
+
+  $g('qz-quit')?.addEventListener('click',()=>{stopAllGames();goHide();});
+
+
+  // ═══════════════════════════════════════════════════════════
+  //  💣  WORD BOMB
+  // ═══════════════════════════════════════════════════════════
+  const WB_SYLS=['ab','ac','ad','al','an','ap','ar','as','at','ba','be','bi','bl','bo','br','bu','ca','ch','cl','co','cr','da','de','di','do','dr','ea','ed','el','en','er','es','ex','fa','fi','fl','fo','fr','ga','gl','go','gr','ha','he','hi','ho','hu','ic','id','im','in','ir','is','it','jo','ju','ka','ke','ki','la','le','li','lo','lu','ma','me','mi','mo','mu','na','ne','ni','no','ob','od','of','om','on','op','or','os','ov','pa','pe','pi','pl','po','pr','pu','ra','re','ri','ro','ru','sa','sc','se','sh','si','sk','sl','sm','sn','so','sp','st','su','sw','ta','te','th','ti','to','tr','tu','un','up','ur','us','va','vi','vo','wa','we','wh','wi','wo','ya','ye','yo'];
+  const WB_DICT=new Set('absolute abandon about above accept across action active actual add admit adopt advance after again against age agree ahead aim air allow almost alone along already also among amount and another any appeal apple apply area argue arm around arrive ask assist attack attempt attend avoid baby back bad ball band bank base basis battle beach bear beat become before begin behind believe below bench between beyond block blood blow board book both bring build burn buy call calm camp care carry case cause certain chance change charge check child city claim class clear climb close code cold common continue copy create crime cross crowd current cycle daily dance dark deal death deep define describe design detail develop direct distance done doubt down draft draw dream drink drive drop each early earth easy edge even event ever examine exist expect extra face fact fail fair fall family fame fast feel field fight file final find fire first flat flow focus food force form found free front full gain game give glad goal good grab grade grand great green grow guide half hand happen hard have head heat help high hill home hope host hour house huge human hunt idea image include indicate input join judge jump keep kind king know land large later lead learn leave less level life light link list live long look lord lose love lucky main make many mark match matter mean mind miss model money month more most move much name nation natural need never next nice night note number object occur offer often open order other over page part path people phone pick plan play point policy post power press print problem process program prove pull push quick race raise reach read ready real reason receive record reflect rely remain report rest result right ring road rock role round rule save scale seek sell send sense series service show sign size skill small smart social some sort space speak spend start state store study system table take task team tell test text time tool total town train trust truth type under unit until upon user usual valid value very view visit voice wait want work world write year zone'.split(' '));
+
+  let wbTimer=null,wbFuseInt=null;
+
+  function launchWordBomb(){
+    goShow('gscreen-wordbomb');
+    activeGame.state='wordbomb';
+    activeGame.lives={};
+    activeGame.usedWords=new Set();
+    activeGame.playerIdx=0;
+    activeGame.players.forEach(p=>{activeGame.lives[p]=3;});
+    renderWbLives();
+    wbNextTurn();
+  }
+
+  function wbNextTurn(){
+    if(!activeGame||activeGame.state!=='wordbomb')return;
+    // skip eliminated players
+    let tries=0;
+    while(activeGame.lives[activeGame.players[activeGame.playerIdx]]<=0&&tries<activeGame.players.length){
+      activeGame.playerIdx=(activeGame.playerIdx+1)%activeGame.players.length; tries++;
+    }
+    activeGame.currentPlayer=activeGame.players[activeGame.playerIdx];
+    activeGame.currentSyl=WB_SYLS[Math.floor(Math.random()*WB_SYLS.length)].toUpperCase();
+
+    $g('wb-syl').textContent=activeGame.currentSyl;
+    const isMe=activeGame.currentPlayer===myUsername;
+    $g('wb-whose-turn').textContent=isMe?'YOUR TURN! 💥':activeGame.currentPlayer+"'s turn";
+    const inputRow=$g('wb-input-row');
+    if(inputRow)inputRow.style.display=isMe?'flex':'none';
+    const inp=$g('wb-text-input');if(inp){inp.value='';if(isMe)setTimeout(()=>inp.focus(),50);}
+    $g('wb-bomb-emoji').className='wb-bomb-anim';
+
+    // Fuse
+    clearTimeout(wbTimer);clearInterval(wbFuseInt);
+    let fuseLeft=100;
+    const fuseEl=$g('wb-fuse-fill');
+    if(fuseEl){fuseEl.style.transition='none';fuseEl.style.width='100%';fuseEl.style.background='#7bed9f';}
+    setTimeout(()=>{ if(fuseEl){fuseEl.style.transition='width 8s linear';fuseEl.style.width='0%';} },60);
+    wbFuseInt=setInterval(()=>{
+      fuseLeft-=12.5;
+      if(fuseLeft<=30&&fuseEl)fuseEl.style.background='#e94560';
+      else if(fuseLeft<=60&&fuseEl)fuseEl.style.background='#ffb700';
+      if(fuseLeft<=0){clearInterval(wbFuseInt);wbExplode();}
+    },1000);
+    wbTimer=setTimeout(wbExplode,9500);
+  }
+
+  function wbExplode(){
+    clearTimeout(wbTimer);clearInterval(wbFuseInt);
+    if(!activeGame||activeGame.state!=='wordbomb')return;
+    const p=activeGame.currentPlayer;
+    activeGame.lives[p]=Math.max(0,(activeGame.lives[p]||0)-1);
+    wbLog('💥 '+p+' exploded! '+(activeGame.lives[p]>0?activeGame.lives[p]+' ❤️ left':'ELIMINATED! 💀'));
+    $g('wb-bomb-emoji').className='wb-bomb-explode';
+    setTimeout(()=>{ if($g('wb-bomb-emoji'))$g('wb-bomb-emoji').className='wb-bomb-anim'; },600);
+    renderWbLives();
+    const alive=activeGame.players.filter(p2=>(activeGame.lives[p2]||0)>0);
+    if(alive.length<=1){endWordBomb(alive[0]);return;}
+    activeGame.playerIdx=(activeGame.playerIdx+1)%activeGame.players.length;
+    setTimeout(wbNextTurn,1400);
+  }
+
+  function wbHandleWord(username,word){
+    if(!activeGame||activeGame.state!=='wordbomb')return;
+    if(username!==activeGame.currentPlayer)return;
+    const lower=word.toLowerCase().trim();
+    const syl=activeGame.currentSyl.toLowerCase();
+    if(!lower.includes(syl)){wbLog('❌ "'+word+'" doesn\'t contain '+activeGame.currentSyl);return;}
+    if(activeGame.usedWords.has(lower)){wbLog('❌ "'+word+'" already used!');return;}
+    if(lower.length<3){wbLog('❌ Too short!');return;}
+    if(lower.length>=3&&lower.length<5&&!WB_DICT.has(lower)){wbLog('❓ "'+word+'" — not recognized, try again');return;}
+    clearTimeout(wbTimer);clearInterval(wbFuseInt);
+    activeGame.usedWords.add(lower);
+    wbLog('✅ '+username+': "'+word.toUpperCase()+'"');
+    activeGame.playerIdx=(activeGame.playerIdx+1)%activeGame.players.length;
+    setTimeout(wbNextTurn,700);
+  }
+
+  $g('wb-submit-btn')?.addEventListener('click',()=>{
+    const inp=$g('wb-text-input');if(!inp)return;
+    const val=inp.value.trim();if(!val)return;
+    inp.value='';
+    socket.emit('chatMessage',{roomName:currentRoom,username:myUsername,message:val,avatar:myAvatar});
+    wbHandleWord(myUsername,val);
+  });
+  $g('wb-text-input')?.addEventListener('keypress',e=>{if(e.key==='Enter')$g('wb-submit-btn')?.click();});
+
+  function renderWbLives(){
+    const el=$g('wb-lives-display');if(!el||!activeGame)return;
+    el.innerHTML='';
+    activeGame.players.forEach(p=>{
+      const lives=activeGame.lives[p]||0;
+      const chip=document.createElement('div');
+      chip.className='wb-player-chip'+(lives<=0?' dead':p===myUsername?' me':'');
+      chip.innerHTML=escapeHtml(p)+' '+'❤️'.repeat(lives)+'🖤'.repeat(Math.max(0,3-lives));
+      el.appendChild(chip);
+    });
+  }
+
+  function wbLog(msg){
+    const el=$g('wb-log');if(!el)return;
+    const d=document.createElement('div');d.className='wb-log-line';d.textContent=msg;
+    el.appendChild(d);el.scrollTop=el.scrollHeight;
+  }
+
+  function endWordBomb(winner){
+    clearTimeout(wbTimer);clearInterval(wbFuseInt);
+    wbLog(winner?'🏆 '+winner+' WINS!':'💣 Everyone exploded!');
+    addSystemMessage('💣 Word Bomb: '+(winner?winner+' wins!':'Draw!'));
+    const inputRow=$g('wb-input-row');if(inputRow)inputRow.style.display='none';
+    activeGame=null;
+    setTimeout(goHide,4000);
+  }
+
+  $g('wb-quit')?.addEventListener('click',()=>{stopAllGames();goHide();});
+
+
+  // ═══════════════════════════════════════════════════════════
+  //  🔫  PIXEL DUEL  (1v1 canvas platformer shooter)
+  // ═══════════════════════════════════════════════════════════
+  let pdRAF=null, pdState=null;
+  const PD_VW=800, PD_VH=500, PD_PRAD=18, PD_BSPD=9, PD_PSPD=4;
+  const PD_PLATFORMS=[
+    {x:0,y:460,w:800,h:40},      // floor
+    {x:150,y:340,w:180,h:14},{x:470,y:340,w:180,h:14},
+    {x:295,y:230,w:210,h:14},{x:60,y:210,w:110,h:14},{x:630,y:210,w:110,h:14},
+    {x:190,y:130,w:130,h:14},{x:480,y:130,w:130,h:14},
+    {x:320,y:60,w:160,h:14},
+  ];
+
+  function launchPixelDuel(){
+    if(activeGame.players.length<2){addSystemMessage('⚠️ Pixel Duel needs 2 players. Ask someone to !join!');return;}
+    goShow('gscreen-pixelduel');
+    const p1n=activeGame.players[0],p2n=activeGame.players[1];
+    pdState={
+      over:false,roundOver:false,
+      round:1,maxRounds:5,
+      players:[
+        {name:p1n,isMe:p1n===myUsername,color:'#4cc9f0',x:120,y:380,vx:0,vy:0,hp:100,score:0,facing:1,reloadT:0,onGround:false},
+        {name:p2n,isMe:p2n===myUsername,color:'#e94560',x:680,y:380,vx:0,vy:0,hp:100,score:0,facing:-1,reloadT:0,onGround:false},
+      ],
+      bullets:[],keys:{},
+    };
+    $g('pd-p1-name').textContent=p1n; $g('pd-p2-name').textContent=p2n;
+    $g('pd-p1-score').textContent='0'; $g('pd-p2-score').textContent='0';
+    $g('pd-round-label').textContent='Round 1/'+pdState.maxRounds;
+    updatePdHP();
+
+    const canvas=$g('pd-canvas');if(!canvas)return;
+    const ctx=canvas.getContext('2d');
+    const wrap=canvas.parentElement;
+    function resizePD(){canvas.width=wrap.clientWidth;canvas.height=wrap.clientHeight;}
+    resizePD();window.addEventListener('resize',resizePD);
+
+    const onKD=e=>{pdState.keys[e.key]=true;if([' ','ArrowUp','ArrowDown'].includes(e.key))e.preventDefault();};
+    const onKU=e=>{delete pdState.keys[e.key];};
+    window.addEventListener('keydown',onKD);window.addEventListener('keyup',onKU);
+
+    const bcInt=setInterval(()=>{
+      if(!pdState||pdState.over){clearInterval(bcInt);return;}
+      const me=pdState.players.find(p=>p.isMe);
+      if(me)socket.emit('gameState',{roomName:currentRoom,game:'pixelduel',payload:{username:me.name,x:me.x,y:me.y,hp:me.hp}});
+    },50);
+
+    function pdLoop(){
+      if(pdState.over)return;
+      pdTick();
+      pdDraw(ctx,canvas);
+      pdRAF=requestAnimationFrame(pdLoop);
+    }
+    pdRAF=requestAnimationFrame(pdLoop);
+
+    $g('pd-quit')?.addEventListener('click',()=>{
+      cancelAnimationFrame(pdRAF);clearInterval(bcInt);
+      window.removeEventListener('keydown',onKD);window.removeEventListener('keyup',onKU);
+      activeGame=null;goHide();
+    });
+  }
+
+  function pdTick(){
+    if(!pdState)return;
+    const k=pdState.keys;
+    pdState.players.forEach((p,idx)=>{
+      if(!p.isMe)return;
+      const left =k['a']||k['A']||k['ArrowLeft'];
+      const right=k['d']||k['D']||k['ArrowRight'];
+      const jump =k['w']||k['W']||k['ArrowUp']||k[' '];
+      const shoot=k['j']||k['J']||k['Enter']||k['Control'];
+      if(left) {p.vx=Math.max(p.vx-1.2,-PD_PSPD);p.facing=-1;}
+      else if(right){p.vx=Math.min(p.vx+1.2,PD_PSPD);p.facing=1;}
+      else p.vx*=0.72;
+      if(jump&&p.onGround){p.vy=-12;p.onGround=false;}
+      p.vy=Math.min(p.vy+0.55,16);
+      p.x+=p.vx;p.y+=p.vy;
+      p.onGround=false;
+      // Platform collisions
+      PD_PLATFORMS.forEach(pl=>{
+        if(p.x+PD_PRAD>pl.x&&p.x-PD_PRAD<pl.x+pl.w&&p.y+PD_PRAD>=pl.y&&p.y+PD_PRAD<=pl.y+pl.h+Math.abs(p.vy)+2){
+          if(p.vy>=0){p.y=pl.y-PD_PRAD;p.vy=0;p.onGround=true;}
+        }
+      });
+      p.x=Math.max(PD_PRAD,Math.min(PD_VW-PD_PRAD,p.x));
+      if(p.y>PD_VH+60){p.y=0;} // respawn from top if fall off
+      if(p.reloadT>0)p.reloadT--;
+      if(shoot&&p.reloadT<=0){
+        pdState.bullets.push({x:p.x+(p.facing*PD_PRAD),y:p.y,vx:p.facing*PD_BSPD,owner:idx,life:55});
+        p.reloadT=20;
+      }
+    });
+
+    // Bullets
+    pdState.bullets=pdState.bullets.filter(b=>{
+      b.x+=b.vx;b.life--;
+      if(b.life<=0)return false;
+      // Check hit
+      let hit=false;
+      pdState.players.forEach((p,idx)=>{
+        if(idx===b.owner)return;
+        if(Math.abs(b.x-p.x)<PD_PRAD+6&&Math.abs(b.y-p.y)<PD_PRAD+6){
+          p.hp=Math.max(0,p.hp-20);
+          hit=true;
+          updatePdHP();
+          if(p.hp<=0)pdRoundOver(b.owner);
+        }
+      });
+      // Platform collision
+      PD_PLATFORMS.forEach(pl=>{
+        if(b.x>pl.x&&b.x<pl.x+pl.w&&b.y>pl.y&&b.y<pl.y+pl.h)hit=true;
+      });
+      return !hit;
+    });
+  }
+
+  function updatePdHP(){
+    if(!pdState)return;
+    const h1=$g('pd-p1-hp'),h2=$g('pd-p2-hp');
+    if(h1)h1.style.width=pdState.players[0].hp+'%';
+    if(h2)h2.style.width=pdState.players[1].hp+'%';
+    const hpColor=hp=>hp>50?'#7bed9f':hp>25?'#ffb700':'#e94560';
+    if(h1)h1.style.background=hpColor(pdState.players[0].hp);
+    if(h2)h2.style.background=hpColor(pdState.players[1].hp);
+  }
+
+  function pdRoundOver(winnerIdx){
+    if(!pdState||pdState.roundOver)return;
+    pdState.roundOver=true;
+    pdState.players[winnerIdx].score++;
+    $g('pd-p1-score').textContent=pdState.players[0].score;
+    $g('pd-p2-score').textContent=pdState.players[1].score;
+    addSystemMessage('🔫 Round '+pdState.round+': '+pdState.players[winnerIdx].name+' wins!');
+    if(pdState.players[winnerIdx].score>=Math.ceil(pdState.maxRounds/2)){pdGameOver(winnerIdx);return;}
+    pdState.round++;
+    $g('pd-round-label').textContent='Round '+pdState.round+'/'+pdState.maxRounds;
+    setTimeout(()=>{
+      if(!pdState)return;
+      pdState.players.forEach((p,i)=>{p.x=i===0?120:680;p.y=380;p.vx=0;p.vy=0;p.hp=100;p.reloadT=0;});
+      pdState.bullets=[];pdState.roundOver=false;
+      updatePdHP();
+    },2000);
+  }
+
+  function pdGameOver(winnerIdx){
+    cancelAnimationFrame(pdRAF);pdRAF=null;
+    if(pdState)pdState.over=true;
+    addSystemMessage('🏆 '+pdState.players[winnerIdx].name+' wins the Pixel Duel!');
+    activeGame=null;
+    setTimeout(goHide,4000);
+  }
+
+  function pdDraw(ctx,canvas){
+    if(!pdState)return;
+    const cw=canvas.width,ch=canvas.height;
+    const sx=cw/PD_VW,sy=ch/PD_VH;
+    // Background
+    const grad=ctx.createLinearGradient(0,0,0,ch);
+    grad.addColorStop(0,'#070720');grad.addColorStop(1,'#1a1a4e');
+    ctx.fillStyle=grad;ctx.fillRect(0,0,cw,ch);
+    // Stars
+    ctx.fillStyle='rgba(255,255,255,0.35)';
+    for(let i=0;i<60;i++){ctx.fillRect(((i*127+43)%cw),(i*71)%ch,1,1);}
+    // Platforms
+    PD_PLATFORMS.forEach(pl=>{
+      const px=pl.x*sx,py=pl.y*sy,pw=pl.w*sx,ph=pl.h*sy;
+      const g=ctx.createLinearGradient(px,py,px,py+ph);
+      g.addColorStop(0,'#4a4a9a');g.addColorStop(1,'#2d2d6e');
+      ctx.fillStyle=g;ctx.fillRect(px,py,pw,ph);
+      ctx.fillStyle='#6e6ec8';ctx.fillRect(px,py,pw,3);
+    });
+    // Bullets
+    pdState.bullets.forEach(b=>{
+      const bx=b.x*sx,by=b.y*sy;
+      ctx.shadowBlur=10;ctx.shadowColor=pdState.players[b.owner]?.color||'#fff';
+      ctx.fillStyle=pdState.players[b.owner]?.color||'#fff';
+      ctx.beginPath();ctx.arc(bx,by,5,0,Math.PI*2);ctx.fill();
+      ctx.shadowBlur=0;
+    });
+    // Players
+    pdState.players.forEach(p=>{
+      const px=p.x*sx,py=p.y*sy,r=PD_PRAD*Math.min(sx,sy);
+      ctx.shadowBlur=p.isMe?18:8;ctx.shadowColor=p.color;
+      ctx.fillStyle=p.color;
+      ctx.beginPath();ctx.arc(px,py,r,0,Math.PI*2);ctx.fill();
+      ctx.shadowBlur=0;
+      ctx.strokeStyle=p.isMe?'#fff':'rgba(255,255,255,0.4)';
+      ctx.lineWidth=p.isMe?3:1.5;ctx.stroke();
+      // Gun
+      ctx.fillStyle='#bbb';
+      ctx.fillRect(px+(p.facing*r),py-2,p.facing*r,5);
+      // Name
+      ctx.fillStyle='#fff';ctx.font=`bold ${Math.round(r*0.6)}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(p.name.slice(0,5),px,py);
+      // HP bar over head
+      const barW=r*3;
+      ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(px-barW/2,py-r-12,barW,6);
+      ctx.fillStyle=p.hp>50?'#7bed9f':p.hp>25?'#ffb700':'#e94560';
+      ctx.fillRect(px-barW/2,py-r-12,(barW*p.hp/100),6);
+    });
+    if(pdState.roundOver){
+      ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,ch/2-30,cw,60);
+      ctx.fillStyle='#ffd700';ctx.font=`bold ${Math.round(cw/18)}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText('ROUND OVER!',cw/2,ch/2);
+    }
+  }
+
+  // ── Levenshtein helper ──────────────────────────────────────
+  function levenshtein(a,b){
+    if(!a.length)return b.length;if(!b.length)return a.length;
+    const m=a.length,n=b.length;
+    const dp=[];
+    for(let i=0;i<=m;i++){dp[i]=[i];for(let j=1;j<=n;j++)dp[i][j]=i?0:j;}
+    for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)
+      dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]:1+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]);
+    return dp[m][n];
+  }
+
+    // ===== SOCKET EVENTS =====
   socket.on('connect',       () => { mySocketId = socket.id; });
   socket.on('connect_error', () => addSystemMessage('⚠️ Connection error. Check server.'));
 
@@ -1354,18 +2156,7 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('chatMessage', data => {
     if (data.avatar && usersMap.has(data.senderId)) usersMap.get(data.senderId).avatar = data.avatar;
     // Route incoming !join and quiz/skribbl answers from other players
-    if (activeGame && activeGame.state==='lobby' && data.message==='!join') {
-      if (!activeGame.players.includes(data.username)) {
-        activeGame.players.push(data.username);
-        if (!activeGame.scores) activeGame.scores = {};
-        activeGame.scores[data.username] = 0;
-        addSystemMessage('✅ ' + data.username + ' joined! (' + activeGame.players.length + ' players)');
-        const el = document.getElementById('mg-joined');
-        if (el) el.textContent = 'Players: ' + activeGame.players.join(', ');
-      }
-    }
-    if (activeGame && activeGame.state==='question' && data.username!==myUsername) handleQuizAnswer(data.username, data.message);
-    if (activeGame && activeGame.state==='drawing'  && data.username!==myUsername) handleSkribblGuess(data.username, data.message);
+    if (data.username !== myUsername) handleIncomingGameMsg(data.username, data.message);
 
     addMessage(data, false);
     scrollToBottom();
