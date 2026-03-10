@@ -725,13 +725,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!dmInput || !activeDmUserId || !myUsername) return;
     const message = dmInput.value.trim();
     if (!message) return;
-    const msgData = { id:Date.now()+'-dm', from:mySocketId, fromUsername:myUsername, to:activeDmUserId, message, timestamp:new Date().toLocaleTimeString() };
-    socket.emit('privateMessage',{toUserId:activeDmUserId,fromUsername:myUsername,message,messageId:msgData.id});
-    if (!dmConversations.has(activeDmUserId)) dmConversations.set(activeDmUserId, []);
-    dmConversations.get(activeDmUserId).push(msgData);
-    addDmMessageEl(msgData);
-    updateDmList();
     dmInput.value = '';
+    // Emit only — the server will echo back via 'privateMessage' which renders it.
+    // We do NOT add to DOM here to avoid the double-render.
+    const msgId = mySocketId + '-' + Date.now();
+    socket.emit('privateMessage',{toUserId:activeDmUserId,fromUsername:myUsername,message,messageId:msgId});
   }
 
   // ===== MINIGAMES =====
@@ -756,7 +754,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── Open lobby when host clicks 🎮 ──────────────────────────
   if (minigameBtn) minigameBtn.addEventListener('click', () => {
-    if (myRole !== 'owner') { addSystemMessage('⚠️ Only the room owner can start minigames.'); return; }
     goShow('gscreen-lobby');
   });
 
@@ -767,8 +764,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.querySelectorAll('.game-pick-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const type = btn.dataset.game;
-      startGameLobby(type);
+      if (myRole !== 'owner') {
+        addSystemMessage('⚠️ Only the host can pick a game. Type !join in chat when a game starts!');
+        goHide(); return;
+      }
+      startGameLobby(btn.dataset.game);
     });
   });
 
@@ -797,11 +797,16 @@ document.addEventListener('DOMContentLoaded', () => {
     activeGame.players.forEach(p => {
       const chip = document.createElement('span');
       chip.className = 'gwait-chip' + (p === myUsername ? ' me' : '');
-      chip.textContent = (p === myUsername ? '👑 ' : '👤 ') + p;
+      chip.textContent = (p === myUsername ? '★ ' : '· ') + p;
       el.appendChild(chip);
     });
     const info = $g('gwait-info');
-    if (info) info.textContent = activeGame.players.length + ' player(s) waiting…';
+    if (info) info.textContent = activeGame.players.length + ' player(s) in lobby';
+    // Owner sees START button; others see a hint
+    const startBtn = $g('gwait-start');
+    const nonHostMsg = $g('gwait-nonhost-msg');
+    if (startBtn) startBtn.style.display = myRole === 'owner' ? '' : 'none';
+    if (nonHostMsg) nonHostMsg.style.display = myRole === 'owner' ? 'none' : '';
   }
 
   $g('gwait-start')?.addEventListener('click', () => {
@@ -861,9 +866,11 @@ document.addEventListener('DOMContentLoaded', () => {
         activeGame.players.push(myUsername);
         activeGame.scores[myUsername]  = 0;
         activeGame.streaks[myUsername] = 0;
-        renderWaitList();
         addSystemMessage('✅ You joined! (' + activeGame.players.length + ')');
       }
+      // Open the waiting room overlay so non-owners can see who's in
+      renderWaitList();
+      goShow('gscreen-wait');
     }
     if (activeGame.state === 'lobby' && message === '!start' && myRole === 'owner') {
       launchGame();
@@ -1375,14 +1382,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Jersey number
       ctx.fillStyle = '#fff';
-      ctx.font      = `bold ${Math.round(r*0.72)}px sans-serif`;
+      ctx.font      = `bold ${Math.round(r*0.72)}px 'Press Start 2P', monospace`;
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(String(p.jersey), px, py + r*0.08);
 
       // Name tag above
       ctx.fillStyle    = p.isMe ? '#fff' : 'rgba(255,255,255,0.75)';
-      ctx.font         = `${Math.round(r*0.55)}px sans-serif`;
+      ctx.font         = `${Math.round(r*0.55)}px 'Press Start 2P', monospace`;
       ctx.textBaseline = 'bottom';
       ctx.fillText(p.name.slice(0,6), px, py - r - cs(2));
     });
@@ -1437,7 +1444,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const fontSize = Math.round(cw / 10);
       ctx.save();
-      ctx.font      = `bold ${fontSize}px sans-serif`;
+      ctx.font      = `bold ${fontSize}px 'Press Start 2P', monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       // Text shadow
@@ -1447,6 +1454,8 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillText(fbState.goalMsg, cw/2, ch/2);
       ctx.restore();
     }
+    // Pixel-art scanline pass
+    drawScanlines(ctx, cw, ch);
   }
 
   // Draw a rounded pentagon patch on the ball
@@ -1494,12 +1503,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const s = fbState.scale;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillStyle = '#ffd700';
-      ctx.font      = `bold ${Math.round(s*38)}px sans-serif`;
+      ctx.font      = `bold ${Math.round(s*38)}px 'Press Start 2P', monospace`;
       ctx.fillText('FULL TIME', canvas.width/2, canvas.height/2 - s*26);
       ctx.fillStyle = '#fff';
-      ctx.font      = `${Math.round(s*26)}px sans-serif`;
+      ctx.font      = `${Math.round(s*26)}px 'Press Start 2P', monospace`;
       ctx.fillText('Blue ' + bl + ' — ' + rd + ' Red', canvas.width/2, canvas.height/2 + s*16);
-      ctx.font      = `${Math.round(s*20)}px sans-serif`;
+      ctx.font      = `${Math.round(s*20)}px 'Press Start 2P', monospace`;
       ctx.fillStyle = '#ffd700';
       ctx.fillText(winner, canvas.width/2, canvas.height/2 + s*52);
     }
@@ -2213,12 +2222,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if(activeGame.players.length<2){addSystemMessage('⚠️ Pixel Duel needs 2 players. Ask someone to !join!');return;}
     goShow('gscreen-pixelduel');
     const p1n=activeGame.players[0],p2n=activeGame.players[1];
+
+    // Spawn on top of the floor (platform index 0: y:460, so top = 460-PD_PRAD = 442)
+    const FLOOR_Y = PD_PLATFORMS[0].y - PD_PRAD;
+
     pdState={
       over:false,roundOver:false,
       round:1,maxRounds:5,
       players:[
-        {name:p1n,isMe:p1n===myUsername,color:'#4cc9f0',x:120,y:380,vx:0,vy:0,hp:100,score:0,facing:1,reloadT:0,onGround:false},
-        {name:p2n,isMe:p2n===myUsername,color:'#e94560',x:680,y:380,vx:0,vy:0,hp:100,score:0,facing:-1,reloadT:0,onGround:false},
+        {name:p1n,isMe:p1n===myUsername,color:'#4cc9f0',x:160,y:FLOOR_Y,vx:0,vy:0,hp:100,score:0,facing:1,reloadT:0,onGround:false,shootPressed:false},
+        {name:p2n,isMe:p2n===myUsername,color:'#e94560',x:640,y:FLOOR_Y,vx:0,vy:0,hp:100,score:0,facing:-1,reloadT:0,onGround:false,shootPressed:false},
       ],
       bullets:[],keys:{},
     };
@@ -2233,7 +2246,11 @@ document.addEventListener('DOMContentLoaded', () => {
     function resizePD(){canvas.width=wrap.clientWidth;canvas.height=wrap.clientHeight;}
     resizePD();window.addEventListener('resize',resizePD);
 
-    const onKD=e=>{pdState.keys[e.key]=true;if([' ','ArrowUp','ArrowDown'].includes(e.key))e.preventDefault();};
+    const onKD=e=>{
+      pdState.keys[e.key]=true;
+      // Prevent page scroll for game keys
+      if([' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault();
+    };
     const onKU=e=>{delete pdState.keys[e.key];};
     window.addEventListener('keydown',onKD);window.addEventListener('keyup',onKU);
 
@@ -2244,7 +2261,7 @@ document.addEventListener('DOMContentLoaded', () => {
     },50);
 
     function pdLoop(){
-      if(pdState.over)return;
+      if(!pdState||pdState.over)return;
       pdTick();
       pdDraw(ctx,canvas);
       pdRAF=requestAnimationFrame(pdLoop);
@@ -2252,7 +2269,7 @@ document.addEventListener('DOMContentLoaded', () => {
     pdRAF=requestAnimationFrame(pdLoop);
 
     $g('pd-quit')?.addEventListener('click',()=>{
-      cancelAnimationFrame(pdRAF);clearInterval(bcInt);
+      cancelAnimationFrame(pdRAF);pdRAF=null;clearInterval(bcInt);
       window.removeEventListener('keydown',onKD);window.removeEventListener('keyup',onKU);
       activeGame=null;goHide();
     });
@@ -2261,54 +2278,84 @@ document.addEventListener('DOMContentLoaded', () => {
   function pdTick(){
     if(!pdState)return;
     const k=pdState.keys;
+    const FLOOR_Y = PD_PLATFORMS[0].y - PD_PRAD;
+
     pdState.players.forEach((p,idx)=>{
       if(!p.isMe)return;
+
       const left =k['a']||k['A']||k['ArrowLeft'];
       const right=k['d']||k['D']||k['ArrowRight'];
-      const jump =k['w']||k['W']||k['ArrowUp']||k[' '];
-      const shoot=k['j']||k['J']||k['Enter']||k['Control'];
-      if(left) {p.vx=Math.max(p.vx-1.2,-PD_PSPD);p.facing=-1;}
-      else if(right){p.vx=Math.min(p.vx+1.2,PD_PSPD);p.facing=1;}
+      const jump =k['w']||k['W']||k['ArrowUp'];
+      // Shoot: F key for P1, space for either, or arrow+ctrl won't conflict
+      const shootKey = k['f']||k['F']||k['z']||k['Z']||k[' '];
+
+      if(left) {p.vx=Math.max(p.vx-1.4,-PD_PSPD);p.facing=-1;}
+      else if(right){p.vx=Math.min(p.vx+1.4,PD_PSPD);p.facing=1;}
       else p.vx*=0.72;
-      if(jump&&p.onGround){p.vy=-12;p.onGround=false;}
-      p.vy=Math.min(p.vy+0.55,16);
-      p.x+=p.vx;p.y+=p.vy;
+
+      if(jump&&p.onGround){p.vy=-13;p.onGround=false;}
+      p.vy=Math.min(p.vy+0.6,18);
+      p.x+=p.vx;
+      p.y+=p.vy;
       p.onGround=false;
-      // Platform collisions
+
+      // Platform collisions — only land on top (falling down through)
       PD_PLATFORMS.forEach(pl=>{
-        if(p.x+PD_PRAD>pl.x&&p.x-PD_PRAD<pl.x+pl.w&&p.y+PD_PRAD>=pl.y&&p.y+PD_PRAD<=pl.y+pl.h+Math.abs(p.vy)+2){
-          if(p.vy>=0){p.y=pl.y-PD_PRAD;p.vy=0;p.onGround=true;}
+        const prevBottom = p.y - p.vy + PD_PRAD; // bottom edge last frame
+        const currBottom = p.y + PD_PRAD;
+        if(p.x+PD_PRAD>pl.x+4 && p.x-PD_PRAD<pl.x+pl.w-4 &&
+           currBottom >= pl.y && prevBottom <= pl.y+pl.h &&
+           p.vy >= 0){
+          p.y = pl.y - PD_PRAD;
+          p.vy = 0;
+          p.onGround = true;
         }
       });
-      p.x=Math.max(PD_PRAD,Math.min(PD_VW-PD_PRAD,p.x));
-      if(p.y>PD_VH+60){p.y=0;} // respawn from top if fall off
-      if(p.reloadT>0)p.reloadT--;
-      if(shoot&&p.reloadT<=0){
-        pdState.bullets.push({x:p.x+(p.facing*PD_PRAD),y:p.y,vx:p.facing*PD_BSPD,owner:idx,life:55});
-        p.reloadT=20;
+
+      // Clamp horizontal
+      p.x=Math.max(PD_PRAD, Math.min(PD_VW-PD_PRAD, p.x));
+
+      // FALL DEATH — falling below screen kills the player (other player wins round)
+      if(p.y > PD_VH + 40){
+        const otherIdx = idx === 0 ? 1 : 0;
+        pdRoundOver(otherIdx);
+        return;
       }
+
+      // Shoot — edge-triggered (must release and re-press)
+      if(shootKey && !p.shootPressed && p.reloadT<=0){
+        pdState.bullets.push({
+          x: p.x + p.facing*(PD_PRAD+4),
+          y: p.y,
+          vx: p.facing * PD_BSPD,
+          vy: 0,
+          owner: idx,
+          life: 95  // travels full width of arena
+        });
+        p.reloadT=18;
+        p.shootPressed=true;
+      }
+      if(!shootKey) p.shootPressed=false;
+      if(p.reloadT>0) p.reloadT--;
     });
 
     // Bullets
     pdState.bullets=pdState.bullets.filter(b=>{
-      b.x+=b.vx;b.life--;
-      if(b.life<=0)return false;
-      // Check hit
+      b.x+=b.vx; b.y+=b.vy; b.life--;
+      if(b.life<=0||b.x<0||b.x>PD_VW) return false;
       let hit=false;
       pdState.players.forEach((p,idx)=>{
-        if(idx===b.owner)return;
-        if(Math.abs(b.x-p.x)<PD_PRAD+6&&Math.abs(b.y-p.y)<PD_PRAD+6){
+        if(idx===b.owner||hit)return;
+        // Generous hitbox: 1.5× radius
+        if(Math.abs(b.x-p.x)<PD_PRAD*1.5 && Math.abs(b.y-p.y)<PD_PRAD*1.5){
           p.hp=Math.max(0,p.hp-20);
           hit=true;
-          pdSpawnHit(b.x, b.y, pdState.players[b.owner]?.color || '#fff');
+          pdSpawnHit(b.x, b.y, pdState.players[b.owner]?.color||'#fff');
           updatePdHP();
-          if(p.hp<=0)pdRoundOver(b.owner);
+          if(p.hp<=0) pdRoundOver(b.owner);
         }
       });
-      // Platform collision
-      PD_PLATFORMS.forEach(pl=>{
-        if(b.x>pl.x&&b.x<pl.x+pl.w&&b.y>pl.y&&b.y<pl.y+pl.h)hit=true;
-      });
+      // Bullets pass through platforms (only players block)
       return !hit;
     });
   }
@@ -2333,9 +2380,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if(pdState.players[winnerIdx].score>=Math.ceil(pdState.maxRounds/2)){pdGameOver(winnerIdx);return;}
     pdState.round++;
     $g('pd-round-label').textContent='Round '+pdState.round+'/'+pdState.maxRounds;
+    const FLOOR_Y = PD_PLATFORMS[0].y - PD_PRAD;
     setTimeout(()=>{
       if(!pdState)return;
-      pdState.players.forEach((p,i)=>{p.x=i===0?120:680;p.y=380;p.vx=0;p.vy=0;p.hp=100;p.reloadT=0;});
+      pdState.players.forEach((p,i)=>{
+        p.x=i===0?160:640; p.y=FLOOR_Y;
+        p.vx=0; p.vy=0; p.hp=100; p.reloadT=0; p.onGround=false;
+        p.facing = i===0 ? 1 : -1;
+        p.shootPressed = false;
+      });
       pdState.bullets=[];pdState.roundOver=false;
       updatePdHP();
     },2000);
@@ -2582,7 +2635,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Name label
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.font = `bold ${Math.round(sc*8)}px sans-serif`;
+      ctx.font = `bold ${Math.round(sc*8)}px 'Press Start 2P', monospace`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const nameW = ctx.measureText(p.name.slice(0,8)).width + sc*8;
       ctx.beginPath(); ctx.roundRect(px - nameW/2, barY - sc*12, nameW, sc*10, sc*3); ctx.fill();
@@ -2600,11 +2653,30 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillRect(0, ch/2 + sc*26, cw, sc*2);
       ctx.shadowBlur = sc*20; ctx.shadowColor = '#ffd700';
       ctx.fillStyle = '#ffd700';
-      ctx.font = `bold ${Math.round(sc*22)}px sans-serif`;
+      ctx.font = `bold ${Math.round(sc*22)}px 'Press Start 2P', monospace`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('ROUND OVER!', cw/2, ch/2);
       ctx.shadowBlur = 0;
     }
+    drawScanlines(ctx, cw, ch);
+  }
+
+  // ── Pixel-art scanline overlay (drawn over finished canvas frame) ──
+  function drawScanlines(ctx, w, h) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    for (let y = 0; y < h; y += 4) {
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(0, y, w, 2);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    // Subtle vignette
+    const vg = ctx.createRadialGradient(w/2,h/2,h*0.3,w/2,h/2,h*0.85);
+    vg.addColorStop(0,'transparent');
+    vg.addColorStop(1,'rgba(0,0,0,0.35)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0,0,w,h);
+    ctx.restore();
   }
 
   // ── Levenshtein helper ──────────────────────────────────────
@@ -2625,7 +2697,7 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('joinedRoom', ({ roomName, users, socketId, isHost:hostStatus, role }) => {
     mySocketId = socketId; isHost = hostStatus; myRole = role || (isHost?'owner':'member');
     if (roomDisplay) roomDisplay.textContent = roomName;
-    if (minigameBtn) minigameBtn.style.display = myRole==='owner' ? 'inline-flex' : 'none';
+    if (minigameBtn) minigameBtn.style.display = 'inline-flex';
     usersMap.clear();
     (users||[]).forEach(u => usersMap.set(u.id, u));
     updateUserList(users||[]);
