@@ -8,7 +8,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Pixel Chat</title>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=1773133469" />
+  <link rel="stylesheet" href="style.css?v=1773135108" />
   <link rel="icon" type="image/png" href="/favicon.png" />
 </head>
 <body>
@@ -359,6 +359,36 @@
             <span class="gpb-name">PIXEL DUEL</span>
             <span class="gpb-desc">1v1 arena · WASD + shoot · first to 3 rounds wins</span>
           </button>
+          <button class="game-pick-btn" data-game="pong">
+            <span class="gpb-icon">🏓</span>
+            <span class="gpb-name">PONG</span>
+            <span class="gpb-desc">Classic 1v1 paddle battle · rallies get faster · first to 7</span>
+          </button>
+          <button class="game-pick-btn" data-game="snake">
+            <span class="gpb-icon">🐍</span>
+            <span class="gpb-name">SNAKE RACE</span>
+            <span class="gpb-desc">Race to eat the most · grow your snake · don't crash!</span>
+          </button>
+          <button class="game-pick-btn" data-game="typing">
+            <span class="gpb-icon">⌨️</span>
+            <span class="gpb-name">TYPING SPRINT</span>
+            <span class="gpb-desc">60 sec typing race · most words wins · compete live</span>
+          </button>
+          <button class="game-pick-btn" data-game="pong">
+            <span class="gpb-icon">🏓</span>
+            <span class="gpb-name">PONG ROYALE</span>
+            <span class="gpb-desc">Classic 1v1 pong · rally for points · first to 7 wins</span>
+          </button>
+          <button class="game-pick-btn" data-game="memory">
+            <span class="gpb-icon">🃏</span>
+            <span class="gpb-name">MEMORY MATCH</span>
+            <span class="gpb-desc">Flip & match cards · race the clock · most pairs wins</span>
+          </button>
+          <button class="game-pick-btn" data-game="snake">
+            <span class="gpb-icon">🐍</span>
+            <span class="gpb-name">SNAKE ARENA</span>
+            <span class="gpb-desc">Grow your snake · collect apples · last one alive wins</span>
+          </button>
         </div>
         <button id="gclose-btn" class="pixel-btn rounded" style="margin-top:22px;">✕ Close</button>
       </div>
@@ -390,7 +420,7 @@
           <button id="fb-quit" class="pixel-btn small rounded" style="margin-left:auto;">✕ Quit</button>
         </div>
         <canvas id="fb-canvas" style="display:block;width:100%;flex:1;cursor:none;"></canvas>
-        <div class="game-hint-bar">WASD / Arrow keys to move &nbsp;|&nbsp; Push the ball into the opponent's goal</div>
+        <div class="game-hint-bar">WASD / Arrows to move &nbsp;·&nbsp; SPACE to kick — direction depends on where you strike the ball</div>
       </div>
     </div>
 
@@ -509,6 +539,106 @@
       </div>
     </div>
 
+    <!-- 🏓 PONG -->
+    <div id="gscreen-pong" class="gscreen hidden">
+      <div class="pong-wrap">
+        <div class="pong-hud">
+          <span id="pong-p1-name" class="pong-pname" style="color:#4cc9f0;">P1</span>
+          <span id="pong-score" class="pong-score-num">0 — 0</span>
+          <span id="pong-p2-name" class="pong-pname" style="color:#e94560;">P2</span>
+          <button id="pong-quit" class="pixel-btn small rounded" style="margin-left:auto;">✕ Quit</button>
+        </div>
+        <canvas id="pong-canvas" style="display:block;width:100%;flex:1;cursor:none;"></canvas>
+        <div class="game-hint-bar">P1: W/S keys &nbsp;·&nbsp; P2: ↑/↓ keys &nbsp;·&nbsp; First to 7 wins!</div>
+      </div>
+    </div>
+
+    <!-- 🐍 SNAKE RACE -->
+    <div id="gscreen-snake" class="gscreen hidden">
+      <div class="snake-wrap">
+        <div class="snake-hud">
+          <span id="snake-p1-name" class="snake-pname" style="color:#7bed9f;">P1</span>
+          <span id="snake-p1-len" class="snake-len">0</span>
+          <span class="snake-pname" style="color:var(--pixel-dim);padding:0 8px;">LENGTH</span>
+          <span id="snake-p2-len" class="snake-len">0</span>
+          <span id="snake-p2-name" class="snake-pname" style="color:#ffd700;">P2</span>
+          <button id="snake-quit" class="pixel-btn small rounded" style="margin-left:auto;">✕ Quit</button>
+        </div>
+        <canvas id="snake-canvas" style="display:block;width:100%;flex:1;cursor:none;image-rendering:pixelated;"></canvas>
+        <div class="game-hint-bar">P1: WASD &nbsp;·&nbsp; P2: Arrow keys &nbsp;·&nbsp; Eat 🍎 to grow · Don't crash!</div>
+      </div>
+    </div>
+
+    <!-- ⌨️ TYPING SPRINT -->
+    <div id="gscreen-typing" class="gscreen hidden">
+      <div class="ty-wrap">
+        <div class="ty-hud">
+          <span class="ty-label">⌨️ TYPING SPRINT</span>
+          <span id="ty-timer" class="ty-timer">60</span>
+          <button id="ty-quit" class="pixel-btn small rounded" style="margin-left:auto;">✕ Quit</button>
+        </div>
+        <div class="ty-scores-bar" id="ty-scores-bar"></div>
+        <div class="ty-content">
+          <div id="ty-text-display" class="ty-text-display"></div>
+          <input id="ty-input" class="ty-input" placeholder="Start typing when ready…" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off"/>
+          <div id="ty-feedback" class="ty-feedback"></div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- PONG ROYALE -->
+    <div id="gscreen-pong" class="gscreen hidden">
+      <div class="pong-wrap">
+        <div class="pong-hud">
+          <div class="pong-player-side">
+            <span id="pong-p1-name" class="pong-pname" style="color:#4cc9f0;">P1</span>
+            <span id="pong-p1-score" class="pong-score">0</span>
+          </div>
+          <div class="pong-center-info">
+            <span id="pong-status" class="pong-status">GET READY</span>
+            <button id="pong-quit" class="pixel-btn small rounded">✕</button>
+          </div>
+          <div class="pong-player-side right">
+            <span id="pong-p2-score" class="pong-score">0</span>
+            <span id="pong-p2-name" class="pong-pname" style="color:#e94560;">P2</span>
+          </div>
+        </div>
+        <canvas id="pong-canvas" style="display:block;width:100%;flex:1;"></canvas>
+        <div class="game-hint-bar">W/S or ↑/↓ to move paddle &nbsp;·&nbsp; First to 7 points wins</div>
+      </div>
+    </div>
+
+    <!-- MEMORY MATCH -->
+    <div id="gscreen-memory" class="gscreen hidden">
+      <div class="mem-wrap">
+        <div class="mem-hud">
+          <span id="mem-pairs" class="mem-stat">Pairs: 0/8</span>
+          <span id="mem-timer" class="mem-stat" style="color:#ffb700;">⏱ 60</span>
+          <span id="mem-moves" class="mem-stat">Moves: 0</span>
+          <button id="mem-quit" class="pixel-btn small rounded">✕</button>
+        </div>
+        <div id="mem-scores" class="mem-scores"></div>
+        <div id="mem-grid" class="mem-grid"></div>
+        <div id="mem-msg" class="mem-msg"></div>
+      </div>
+    </div>
+
+    <!-- SNAKE ARENA -->
+    <div id="gscreen-snake" class="gscreen hidden">
+      <div class="snake-wrap">
+        <div class="snake-hud">
+          <div id="snake-scores" class="snake-scores"></div>
+          <div class="snake-hud-center">
+            <span id="snake-apples" class="snake-stat">🍎 0</span>
+            <button id="snake-quit" class="pixel-btn small rounded">✕</button>
+          </div>
+        </div>
+        <canvas id="snake-canvas" style="display:block;width:100%;flex:1;"></canvas>
+        <div class="game-hint-bar">WASD / Arrow keys to steer &nbsp;·&nbsp; Eat apples to grow &nbsp;·&nbsp; Don't hit walls or other snakes!</div>
+      </div>
+    </div>
+
   </div><!-- #game-overlay -->
 
 
@@ -577,6 +707,6 @@
   </script>
   
   <script src="/socket.io/socket.io.js"></script>
-  <script src="client.js?v=1773133469"></script>
+  <script src="client.js?v=1773135108"></script>
 </body>
 </html>

@@ -1856,3 +1856,126 @@ input[type="checkbox"] {
 .pd-score  { font-size:16px; font-family:var(--pixel-font); color:#fff; min-width:22px; text-align:center; text-shadow:0 0 6px rgba(255,255,255,.5); }
 .pd-center { display:flex; flex-direction:column; align-items:center; gap:4px; flex-shrink:0; padding:0 10px; }
 .pd-round  { font-size:7px; font-family:var(--pixel-font); color:var(--pixel-accent); letter-spacing:.5px; }
+
+/* ── Pong Royale ────────────────────────────────── */
+.pong-wrap { width:100%; height:100%; display:flex; flex-direction:column; background:#02020a; }
+.pong-hud {
+  display:flex; align-items:center; padding:6px 14px; gap:10px;
+  background:rgba(0,0,0,.92); border-bottom:3px solid #111133; flex-shrink:0;
+}
+.pong-player-side { display:flex; align-items:center; gap:10px; flex:1; }
+.pong-player-side.right { flex-direction:row-reverse; }
+.pong-pname  { font-size:7px; font-family:var(--pixel-font); }
+.pong-score  { font-size:22px; font-family:var(--pixel-font); color:#fff;
+               text-shadow:0 0 10px rgba(255,255,255,.6); min-width:24px; text-align:center; }
+.pong-center-info { display:flex; flex-direction:column; align-items:center; gap:4px; flex-shrink:0; }
+.pong-status { font-size:7px; font-family:var(--pixel-font); color:var(--pixel-accent); letter-spacing:1px; }
+
+/* ── Memory Match ───────────────────────────────── */
+.mem-wrap { width:100%; height:100%; display:flex; flex-direction:column; align-items:center;
+            background:#0a0a1e; padding:10px 16px; gap:10px; overflow-y:auto; }
+.mem-hud { display:flex; align-items:center; gap:16px; width:100%; max-width:640px; flex-shrink:0; }
+.mem-stat { font-size:8px; font-family:var(--pixel-font); color:var(--pixel-text); }
+.mem-scores { display:flex; gap:16px; justify-content:center; width:100%; max-width:640px; flex-shrink:0; flex-wrap:wrap; }
+.mem-player-score { font-size:8px; font-family:var(--pixel-font); padding:4px 12px;
+                    border:2px solid var(--pixel-border); background:var(--pixel-panel); }
+.mem-grid {
+  display:grid; gap:8px;
+  width:100%; max-width:580px; flex-shrink:0;
+}
+.mem-card {
+  aspect-ratio:1; cursor:pointer;
+  background:var(--pixel-panel);
+  border:3px solid var(--pixel-border);
+  display:flex; align-items:center; justify-content:center;
+  font-size:28px; user-select:none;
+  box-shadow:3px 3px 0 rgba(0,0,0,.5);
+  transition:transform .1s;
+}
+.mem-card:hover:not(.flipped):not(.matched) { border-color:var(--pixel-accent); transform:translate(-1px,-1px); box-shadow:4px 4px 0 var(--pixel-accent); }
+.mem-card.flipped  { background:#1a1a3e; border-color:#4cc9f0; }
+.mem-card.matched  { background:rgba(123,237,159,.12); border-color:#7bed9f; cursor:default; box-shadow:3px 3px 0 #7bed9f; }
+.mem-card.hidden-face { font-size:0; }  /* hides emoji before flip */
+.mem-msg { font-size:10px; font-family:var(--pixel-font); color:var(--pixel-accent);
+           text-align:center; min-height:24px; letter-spacing:2px; }
+
+/* ── Snake Arena ────────────────────────────────── */
+.snake-wrap { width:100%; height:100%; display:flex; flex-direction:column; background:#010a01; }
+.snake-hud {
+  display:flex; align-items:center; padding:6px 12px; gap:10px;
+  background:rgba(0,0,0,.92); border-bottom:3px solid #051405; flex-shrink:0;
+}
+.snake-scores { display:flex; gap:10px; flex:1; flex-wrap:wrap; }
+.snake-player-chip {
+  font-size:7px; font-family:var(--pixel-font); padding:3px 10px;
+  border:2px solid; background:rgba(0,0,0,.4);
+}
+.snake-hud-center { display:flex; align-items:center; gap:10px; flex-shrink:0; }
+.snake-stat { font-size:8px; font-family:var(--pixel-font); color:#7bed9f; }
+
+/* ── Pong ─────────────────────────────────────── */
+.pong-wrap { width:100%; height:100%; display:flex; flex-direction:column; background:#000; }
+.pong-hud {
+  display:flex; align-items:center; gap:12px; padding:6px 12px;
+  background:rgba(0,0,0,.9); border-bottom:3px solid #111; flex-shrink:0;
+}
+.pong-pname { font-size:8px; font-family:var(--pixel-font); }
+.pong-score-num {
+  font-size:18px; font-family:var(--pixel-font); color:#fff;
+  flex:1; text-align:center;
+  text-shadow:0 0 12px rgba(255,255,255,.6);
+}
+
+/* ── Snake Race ───────────────────────────────── */
+.snake-wrap { width:100%; height:100%; display:flex; flex-direction:column; background:#020a02; }
+.snake-hud {
+  display:flex; align-items:center; gap:10px; padding:6px 12px;
+  background:rgba(0,0,0,.9); border-bottom:3px solid #051405; flex-shrink:0;
+}
+.snake-pname { font-size:8px; font-family:var(--pixel-font); }
+.snake-len { font-size:14px; font-family:var(--pixel-font); color:#fff; min-width:28px; text-align:center; }
+
+/* ── Typing Sprint ────────────────────────────── */
+.ty-wrap { width:100%; height:100%; display:flex; flex-direction:column; background:#08080f; }
+.ty-hud {
+  display:flex; align-items:center; gap:12px; padding:6px 12px;
+  background:rgba(0,0,0,.9); border-bottom:3px solid #1a1a3a; flex-shrink:0;
+}
+.ty-label { font-size:9px; font-family:var(--pixel-font); color:var(--pixel-accent); }
+.ty-timer { font-size:16px; font-family:var(--pixel-font); color:#ffb700; min-width:36px; text-align:center; }
+.ty-scores-bar {
+  display:flex; gap:12px; padding:6px 14px; flex-wrap:wrap;
+  background:rgba(0,0,0,.5); border-bottom:2px solid #1a1a3a; flex-shrink:0;
+}
+.ty-player-stat {
+  font-size:7px; font-family:var(--pixel-font);
+  padding:3px 10px; border:2px solid; background:rgba(0,0,0,.4);
+}
+.ty-content {
+  flex:1; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:20px; padding:24px;
+  overflow:hidden;
+}
+.ty-text-display {
+  max-width:800px; width:100%; font-size:15px; line-height:2;
+  font-family:var(--pixel-font); word-break:break-all;
+  background:rgba(0,0,0,.4); border:2px solid var(--pixel-border);
+  padding:16px 20px; max-height:160px; overflow:hidden;
+  position:relative;
+  box-shadow: 3px 3px 0 rgba(0,0,0,.5);
+}
+.ty-char { color:#555; }
+.ty-char.correct { color:#7bed9f; }
+.ty-char.wrong   { color:#e94560; background:rgba(233,69,96,.25); }
+.ty-char.cursor  { border-left:2px solid #4cc9f0; }
+.ty-input {
+  max-width:800px; width:100%; padding:12px 16px;
+  background:rgba(0,0,0,.6); border:2px solid var(--pixel-border);
+  border-radius:0;
+  color:var(--pixel-text); font-family:var(--pixel-font); font-size:11px;
+}
+.ty-input:focus { outline:none; border-color:var(--pixel-accent); }
+.ty-feedback {
+  font-size:10px; font-family:var(--pixel-font);
+  color:var(--pixel-dim); text-align:center;
+}
