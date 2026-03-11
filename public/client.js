@@ -452,7 +452,7 @@ document.addEventListener('DOMContentLoaded', () => {
           '• Double-click msg  — reply',
           '• Double-click user — DM',
           '• Host only: 🎮 button to start minigames',
-          '• In minigame lobby: !join to enter, !start to begin',
+          '• In minigame lobby: !join to enter a game',
         ].forEach(l => addSystemMessage(l));
         return;
       }
@@ -460,7 +460,14 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // --- @BOT MENTION ---
+    // --- MINIGAME CHAT COMMANDS ---
+    handleLocalGameMsg(message);
+
+    // --- EMIT TO SERVER (always first, so question appears before bot answer) ---
+    socket.emit('chatMessage', { roomName:currentRoom, username:myUsername, message, image, replyTo:pendingReply, avatar:myAvatar });
+    addMessage({ username:myUsername, message, image, replyTo:pendingReply, id:Date.now()+'-local', timestamp:new Date().toLocaleTimeString(), senderId:socket.id, reactions:{}, avatar:myAvatar }, true);
+
+    // --- @BOT MENTION (runs after message is already shown) ---
     if (message.toLowerCase().includes('@bot')) {
       const botMsg = message.replace(/@bot/gi, '').trim();
       if (!groqApiKey) {
@@ -490,15 +497,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         } catch(err) { addSystemMessage('⚠️ Bot error: ' + err.message); }
       }
-      // fall through — still send the original message to the room
     }
-
-    // --- MINIGAME CHAT COMMANDS ---
-    handleLocalGameMsg(message);
-
-    // --- EMIT TO SERVER ---
-    socket.emit('chatMessage', { roomName:currentRoom, username:myUsername, message, image, replyTo:pendingReply, avatar:myAvatar });
-    addMessage({ username:myUsername, message, image, replyTo:pendingReply, id:Date.now()+'-local', timestamp:new Date().toLocaleTimeString(), senderId:socket.id, reactions:{}, avatar:myAvatar }, true);
 
     messageInput.value = '';
     clearImagePreview(); clearReply();
@@ -798,7 +797,7 @@ document.addEventListener('DOMContentLoaded', () => {
     $g('gwait-title').textContent = names[type] || type;
     renderWaitList();
     socket.emit('chatMessage', { roomName:currentRoom, username:myUsername,
-      message:`🎮 [${names[type]}] starting! Everyone type !join — then I'll type !start`, avatar:myAvatar });
+      message:`🎮 [${names[type]}] lobby open! Type !join to play. Host will start when ready.`, avatar:myAvatar });
     goShow('gscreen-wait');
   }
 
@@ -834,6 +833,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!activeGame) return;
     const t = activeGame.type;
     addSystemMessage('🎮 ' + t.toUpperCase() + ' — STARTING!');
+    // Broadcast to all joined players so they launch on their side too
+    if (myRole === 'owner') {
+      socket.emit('chatMessage', { roomName: currentRoom, username: myUsername, avatar: myAvatar,
+        message: '🎮!launch:' + t + ':' + JSON.stringify(activeGame.players) });
+    }
+    _doLaunchGame(t);
+  }
+
+  function _doLaunchGame(t) {
     if (t === 'football')  launchFootball();
     else if (t === 'quiz')      launchQuiz();
     else if (t === 'skribbl')   launchSkribbl();
@@ -842,9 +850,6 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (t === 'pong')      launchPong();
     else if (t === 'snake')     launchSnake();
     else if (t === 'typing')    launchTyping();
-    else if (t === 'pong')      launchPong();
-    else if (t === 'memory')    launchMemory();
-    else if (t === 'snake')     launchSnake();
   }
 
   function stopAllGames() {
@@ -860,6 +865,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Route incoming chat messages into active games
   function handleIncomingGameMsg(username, message) {
+    // Host broadcast: game is launching — non-host clients reconstruct state and launch
+    if (message.startsWith('🎮!launch:')) {
+      const afterPrefix = message.slice('🎮!launch:'.length);
+      const colonIdx = afterPrefix.indexOf(':');
+      const gameType = colonIdx >= 0 ? afterPrefix.slice(0, colonIdx) : afterPrefix;
+      let players = [];
+      try { players = JSON.parse(afterPrefix.slice(colonIdx + 1)); } catch(e) {}
+      // Only act if we joined this game
+      if (!players.includes(myUsername)) return;
+      if (!activeGame) {
+        activeGame = { type: gameType, state: 'lobby', players,
+          scores: Object.fromEntries(players.map(p=>[p,0])),
+          streaks: Object.fromEntries(players.map(p=>[p,0])) };
+      } else {
+        activeGame.type = gameType;
+        activeGame.players = players;
+      }
+      addSystemMessage('🎮 ' + gameType.toUpperCase() + ' — STARTING!');
+      _doLaunchGame(gameType);
+      return;
+    }
+
     if (!activeGame) return;
     if (activeGame.state === 'lobby' && message === '!join') {
       if (!activeGame.players.includes(username)) {
@@ -869,9 +896,6 @@ document.addEventListener('DOMContentLoaded', () => {
         renderWaitList();
         addSystemMessage('✅ ' + username + ' joined! (' + activeGame.players.length + ')');
       }
-    }
-    if (activeGame.state === 'lobby' && message === '!start' && myRole === 'owner') {
-      launchGame();
     }
     if (activeGame.state === 'question') handleQuizIncoming(username, message);
     if (activeGame.state === 'drawing')  handleSkribblIncoming(username, message);
@@ -888,13 +912,11 @@ document.addEventListener('DOMContentLoaded', () => {
         activeGame.streaks[myUsername] = 0;
         addSystemMessage('✅ You joined! (' + activeGame.players.length + ')');
       }
-      // Open the waiting room overlay so non-owners can see who's in
+      // Open the waiting room overlay so non-owners can see who\'s in
       renderWaitList();
       goShow('gscreen-wait');
     }
-    if (activeGame.state === 'lobby' && message === '!start' && myRole === 'owner') {
-      launchGame();
-    }
+    // Note: !start removed — use the START GAME button instead
     if (activeGame.state === 'wordbomb' && activeGame.currentPlayer === myUsername) wbHandleWord(myUsername, message);
   }
 
@@ -923,9 +945,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Physics constants (tuned per-frame at 60fps)
   const FB_FRICTION   = 0.982;   // grass friction on ball
   const FB_WALL_DAMP  = 0.72;    // energy lost on wall bounce
-  const FB_KICK_BASE  = 5.5;     // min kick force
-  const FB_PLAYER_ACC = 0.55;    // player acceleration
-  const FB_PLAYER_MAX = 4.8;     // max player speed
+  const FB_KICK_BASE  = 3.8;     // reduced kick force
+  const FB_PLAYER_ACC = 0.55;    // player acceleration (unused with lerp)
+  const FB_PLAYER_MAX = 3.2;     // slower max speed (was 4.8)
   const FB_PLAYER_DEC = 0.80;    // player deceleration (no input)
 
   function launchFootball() {
@@ -1063,8 +1085,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const tlen = Math.hypot(tx, ty);
       if (tlen > 0) { tx = tx/tlen * FB_PLAYER_MAX; ty = ty/tlen * FB_PLAYER_MAX; }
 
-      // Exponential lerp — framerate-independent, silky smooth
-      const accel  = tlen > 0 ? 0.22 : 0.18;
+      // Exponential lerp — lower values = more inertia/momentum
+      const accel  = tlen > 0 ? 0.09 : 0.07;  // sluggish with drift
       const factor = 1 - Math.pow(1 - accel, dt);
       me.vx += (tx - me.vx) * factor;
       me.vy += (ty - me.vy) * factor;
@@ -1082,11 +1104,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (kdist < kickRange && kdist > 0.1) {
           const knx = kdx / kdist, kny = kdy / kdist;
           const proximity = 1 - kdist / kickRange;
-          const power = FB_KICK_BASE * (1.5 + proximity * 1.4);
-          b.vx = knx * power + me.vx * 0.5;
-          b.vy = kny * power + me.vy * 0.5;
+          const power = FB_KICK_BASE * (1.1 + proximity * 0.9);
+          b.vx = knx * power + me.vx * 0.3;
+          b.vy = kny * power + me.vy * 0.3;
           const tangent = knx * me.vy - kny * me.vx;
-          b.spin = tangent * 0.6;
+          b.spin = tangent * 0.45;
           me.kickCooldown = 22;
           b.x = me.x + knx * (FB_PRAD + FB_BRAD + 1.5);
           b.y = me.y + kny * (FB_PRAD + FB_BRAD + 1.5);
@@ -1167,7 +1189,8 @@ document.addEventListener('DOMContentLoaded', () => {
           b.vx += j * nx; b.vy += j * ny;
           b.spin += (nx * p.vy - ny * p.vx) * 0.35;
           const bSpd = Math.hypot(b.vx, b.vy);
-          if (bSpd < FB_KICK_BASE) { const boost = FB_KICK_BASE / Math.max(0.1, bSpd); b.vx *= boost; b.vy *= boost; }
+          const minPush = FB_KICK_BASE * 0.7;
+          if (bSpd < minPush) { const boost = minPush / Math.max(0.1, bSpd); b.vx *= boost; b.vy *= boost; }
         }
         const overlap = minD - dist + 0.5;
         b.x += nx * overlap; b.y += ny * overlap;
@@ -1602,7 +1625,7 @@ document.addEventListener('DOMContentLoaded', () => {
       skNextRound();
     } else {
       // Solo practice
-      addSystemMessage('⚠️ Solo mode — ask others to !join then !start for multiplayer.');
+      addSystemMessage('⚠️ Solo mode — ask others to !join for multiplayer.');
       skNextRound();
     }
   }
@@ -2725,9 +2748,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socket.on('chatMessage', data => {
     if (data.avatar && usersMap.has(data.senderId)) usersMap.get(data.senderId).avatar = data.avatar;
-    // Route incoming !join and quiz/skribbl answers from other players
+    // Route incoming game messages from other players
     if (data.username !== myUsername) handleIncomingGameMsg(data.username, data.message);
-
+    // Hide internal game protocol messages from chat UI
+    if (data.message && data.message.startsWith('🎮!launch:')) return;
+    // Skip server echo of our own messages — we already rendered them locally
+    if (data.senderId === mySocketId || data.username === myUsername) return;
     addMessage(data, false);
     scrollToBottom();
     playSystemSound('receive');
