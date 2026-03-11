@@ -8,7 +8,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Pixel Chat</title>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=1773135108" />
+  <link rel="stylesheet" href="style.css?v=1773229236" />
   <link rel="icon" type="image/png" href="/favicon.png" />
 </head>
 <body>
@@ -329,6 +329,18 @@
   <div id="game-overlay" class="game-overlay hidden">
 
     <!-- LOBBY: pick a game -->
+    <!-- LOADING SCREEN -->
+    <div id="gscreen-loading" class="gscreen hidden">
+      <div class="gscreen-inner" style="display:flex;flex-direction:column;align-items:center;gap:24px;">
+        <div id="gloading-icon" style="font-size:52px;">🎮</div>
+        <h2 id="gloading-title" class="pixel-title" style="font-size:14px;">LOADING…</h2>
+        <div class="gloading-bar-wrap">
+          <div class="gloading-bar-fill" id="gloading-bar"></div>
+        </div>
+        <p class="pixel-hint" id="gloading-hint">Get ready!</p>
+      </div>
+    </div>
+
     <div id="gscreen-lobby" class="gscreen">
       <div class="gscreen-inner">
         <h1 class="pixel-title" style="font-size:13px;margin-bottom:6px;">🎮 MINIGAMES</h1>
@@ -535,7 +547,7 @@
           </div>
         </div>
         <canvas id="pd-canvas" style="display:block;width:100%;flex:1;cursor:none;"></canvas>
-        <div class="game-hint-bar">WASD to move &nbsp;·&nbsp; W / ↑ to jump &nbsp;·&nbsp; F or Z or SPACE to shoot &nbsp;·&nbsp; Fall off = lose the round!</div>
+        <div class="game-hint-bar">WASD to move &nbsp;·&nbsp; Mouse to aim &nbsp;·&nbsp; SPACE or F to shoot &nbsp;·&nbsp; Take cover behind walls!</div>
       </div>
     </div>
 
@@ -549,7 +561,7 @@
           <button id="pong-quit" class="pixel-btn small rounded" style="margin-left:auto;">✕ Quit</button>
         </div>
         <canvas id="pong-canvas" style="display:block;width:100%;flex:1;cursor:none;"></canvas>
-        <div class="game-hint-bar">P1: W/S keys &nbsp;·&nbsp; P2: ↑/↓ keys &nbsp;·&nbsp; First to 7 wins!</div>
+        <div class="game-hint-bar">P1: W/S · P2: ↑/↓ · P3: Q/E · P4: Z/X · First to 7 wins!</div>
       </div>
     </div>
 
@@ -707,6 +719,6 @@
   </script>
   
   <script src="/socket.io/socket.io.js"></script>
-  <script src="client.js?v=1773227297"></script>
+  <script src="client.js?v=1773229236"></script>
 </body>
 </html>
