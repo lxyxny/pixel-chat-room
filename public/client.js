@@ -452,7 +452,7 @@ document.addEventListener('DOMContentLoaded', () => {
           '• Double-click msg  — reply',
           '• Double-click user — DM',
           '• Host only: 🎮 button to start minigames',
-          '• In minigame lobby: !join to enter a game',
+          '• Host starts a minigame → popup asks if you want to join',
         ].forEach(l => addSystemMessage(l));
         return;
       }
@@ -800,7 +800,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.game-pick-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       if (myRole !== 'owner') {
-        addSystemMessage('⚠️ Only the host can pick a game. Type !join in chat when a game starts!');
+        addSystemMessage('⚠️ Only the host can pick a game!');
         goHide(); return;
       }
       startGameLobby(btn.dataset.game);
@@ -810,6 +810,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Legacy modal close
   document.getElementById('close-minigame-btn')?.addEventListener('click', goHide);
 
+  const GAME_NAMES = { football:'⚽ Football', skribbl:'🎨 Skribbl', quiz:'📚 Quiz Battle', wordbomb:'💣 Word Bomb', pixelduel:'🔫 Pixel Duel', pong:'🏓 Pong', snake:'🐍 Snake Race', typing:'⌨️ Typing Sprint' };
+
   function startGameLobby(type) {
     activeGame = {
       type, state: 'lobby',
@@ -817,11 +819,12 @@ document.addEventListener('DOMContentLoaded', () => {
       scores: { [myUsername]: 0 },
       streaks: { [myUsername]: 0 },
     };
-    const names = { football:'⚽ Football', skribbl:'🎨 Skribbl', quiz:'📚 Quiz Battle', wordbomb:'💣 Word Bomb', pixelduel:'🔫 Pixel Duel', pong:'🏓 Pong Royale', memory:'🃏 Memory Match', snake:'🐍 Snake Arena' };
-    $g('gwait-title').textContent = names[type] || type;
+    const gameName = GAME_NAMES[type] || type;
+    $g('gwait-title').textContent = gameName;
     renderWaitList();
-    socket.emit('chatMessage', { roomName:currentRoom, username:myUsername,
-      message:`🎮 [${names[type]}] lobby open! Type !join to play. Host will start when ready.`, avatar:myAvatar });
+    // Send invite popup to everyone else in the room via socket
+    socket.emit('gameInvite', { roomName: currentRoom, game: type, gameName, hostUsername: myUsername });
+    addSystemMessage('🎮 Invite sent! Waiting for players to join…');
     goShow('gscreen-wait');
   }
 
@@ -856,11 +859,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function launchGame() {
     if (!activeGame) return;
     const t = activeGame.type;
-    addSystemMessage('🎮 ' + t.toUpperCase() + ' — STARTING!');
-    // Broadcast to all joined players so they launch on their side too
+    addSystemMessage('🎮 ' + (GAME_NAMES[t]||t.toUpperCase()) + ' — STARTING!');
+    // Tell all joined players to launch via dedicated socket event
     if (myRole === 'owner') {
-      socket.emit('chatMessage', { roomName: currentRoom, username: myUsername, avatar: myAvatar,
-        message: '🎮!launch:' + t + ':' + JSON.stringify(activeGame.players) });
+      socket.emit('gameLaunch', { roomName: currentRoom, game: t, players: activeGame.players });
     }
     _doLaunchGame(t);
   }
@@ -924,60 +926,71 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Route incoming chat messages into active games
+  // Incoming game messages (quiz/skribbl/wordbomb answers)
   function handleIncomingGameMsg(username, message) {
-    // Host broadcast: game is launching — non-host clients reconstruct state and launch
-    if (message.startsWith('🎮!launch:')) {
-      const afterPrefix = message.slice('🎮!launch:'.length);
-      const colonIdx = afterPrefix.indexOf(':');
-      const gameType = colonIdx >= 0 ? afterPrefix.slice(0, colonIdx) : afterPrefix;
-      let players = [];
-      try { players = JSON.parse(afterPrefix.slice(colonIdx + 1)); } catch(e) {}
-      // Only act if we joined this game
-      if (!players.includes(myUsername)) return;
-      if (!activeGame) {
-        activeGame = { type: gameType, state: 'lobby', players,
-          scores: Object.fromEntries(players.map(p=>[p,0])),
-          streaks: Object.fromEntries(players.map(p=>[p,0])) };
-      } else {
-        activeGame.type = gameType;
-        activeGame.players = players;
-      }
-      addSystemMessage('🎮 ' + gameType.toUpperCase() + ' — STARTING!');
-      _doLaunchGame(gameType);
-      return;
-    }
-
     if (!activeGame) return;
-    if (activeGame.state === 'lobby' && message === '!join') {
-      if (!activeGame.players.includes(username)) {
-        activeGame.players.push(username);
-        activeGame.scores[username]  = 0;
-        activeGame.streaks[username] = 0;
-        renderWaitList();
-        addSystemMessage('✅ ' + username + ' joined! (' + activeGame.players.length + ')');
-      }
-    }
     if (activeGame.state === 'question') handleQuizIncoming(username, message);
     if (activeGame.state === 'drawing')  handleSkribblIncoming(username, message);
     if (activeGame.state === 'wordbomb' && activeGame.currentPlayer === username) wbHandleWord(username, message);
   }
 
-  // My own !join / !start also route through here (on send)
+  // Local messages (wordbomb only now — no more !join/!start)
   function handleLocalGameMsg(message) {
     if (!activeGame) return;
-    if (activeGame.state === 'lobby' && message === '!join') {
-      if (!activeGame.players.includes(myUsername)) {
-        activeGame.players.push(myUsername);
-        activeGame.scores[myUsername]  = 0;
-        activeGame.streaks[myUsername] = 0;
-        addSystemMessage('✅ You joined! (' + activeGame.players.length + ')');
-      }
-      // Open the waiting room overlay so non-owners can see who\'s in
-      renderWaitList();
-      goShow('gscreen-wait');
-    }
-    // Note: !start removed — use the START GAME button instead
     if (activeGame.state === 'wordbomb' && activeGame.currentPlayer === myUsername) wbHandleWord(myUsername, message);
+  }
+
+  // ── Game invite popup (shown when host starts a game) ──────────────────
+  function showGameInvitePopup(game, gameName, hostUsername) {
+    // Remove any existing popup
+    const existing = document.getElementById('game-invite-popup');
+    if (existing) existing.remove();
+
+    const popup = document.createElement('div');
+    popup.id = 'game-invite-popup';
+    popup.className = 'game-invite-popup';
+    popup.innerHTML =
+      '<div class="gip-icon">' + (GAME_ICONS[game]||'🎮') + '</div>' +
+      '<div class="gip-body">' +
+        '<div class="gip-title">' + gameName + '</div>' +
+        '<div class="gip-host">' + hostUsername + ' is hosting</div>' +
+      '</div>' +
+      '<button class="gip-btn yes" id="gip-yes">▶ JOIN</button>' +
+      '<button class="gip-btn no"  id="gip-no">✕</button>';
+    document.body.appendChild(popup);
+
+    // Animate in
+    requestAnimationFrame(() => popup.classList.add('visible'));
+
+    let autoTimeout = setTimeout(() => dismissInvite(popup, false, game), 20000);
+
+    document.getElementById('gip-yes').onclick = () => {
+      clearTimeout(autoTimeout);
+      dismissInvite(popup, true, game);
+    };
+    document.getElementById('gip-no').onclick = () => {
+      clearTimeout(autoTimeout);
+      dismissInvite(popup, false, game);
+    };
+  }
+
+  function dismissInvite(popup, accepted, game) {
+    popup.classList.remove('visible');
+    setTimeout(() => popup.remove(), 400);
+    if (accepted) {
+      // Tell server we're joining
+      socket.emit('gameJoinResponse', { roomName: currentRoom, username: myUsername, accepted: true, game });
+      // Build local activeGame state so we're ready to receive launch
+      if (!activeGame || activeGame.type !== game) {
+        activeGame = { type: game, state: 'lobby', players: [myUsername],
+          scores: { [myUsername]: 0 }, streaks: { [myUsername]: 0 } };
+      } else if (!activeGame.players.includes(myUsername)) {
+        activeGame.players.push(myUsername);
+        activeGame.scores[myUsername] = 0;
+        activeGame.streaks[myUsername] = 0;
+      }
+      addSystemMessage('✅ You joined the ' + (GAME_NAMES[game]||game) + ' lobby!');
+    }
   }
 
 
@@ -1646,6 +1659,45 @@ document.addEventListener('DOMContentLoaded', () => {
     goHide();
   }
 
+  // ── Socket: receive game invite popup ───────────────────────────────────
+  socket.on('gameInvite', ({ game, gameName, hostUsername }) => {
+    showGameInvitePopup(game, gameName, hostUsername);
+  });
+
+  // ── Socket: a player accepted/declined the invite ───────────────────────
+  socket.on('gameJoinResponse', ({ username, accepted, game }) => {
+    if (!activeGame || activeGame.type !== game || myRole !== 'owner') return;
+    if (accepted) {
+      if (!activeGame.players.includes(username)) {
+        activeGame.players.push(username);
+        activeGame.scores[username]  = 0;
+        activeGame.streaks[username] = 0;
+        renderWaitList();
+        addSystemMessage('✅ ' + username + ' joined! (' + activeGame.players.length + ')');
+      }
+    }
+  });
+
+  // ── Socket: host launched the game — all joined players start ───────────
+  socket.on('gameLaunch', ({ game, players }) => {
+    if (!players.includes(myUsername)) return;  // we didn't join, ignore
+    if (!activeGame) {
+      activeGame = { type: game, state: 'lobby', players,
+        scores: Object.fromEntries(players.map(p=>[p,0])),
+        streaks: Object.fromEntries(players.map(p=>[p,0])) };
+    } else {
+      activeGame.type    = game;
+      activeGame.players = players;
+      players.forEach(p => { activeGame.scores[p]  = activeGame.scores[p]  || 0; });
+      players.forEach(p => { activeGame.streaks[p] = activeGame.streaks[p] || 0; });
+    }
+    // Close invite popup if still open
+    const popup = document.getElementById('game-invite-popup');
+    if (popup) popup.remove();
+    addSystemMessage('🎮 ' + (GAME_NAMES[game]||game.toUpperCase()) + ' — STARTING!');
+    _doLaunchGame(game);
+  });
+
   // Receive opponents' positions
   socket.on('gameState', data => {
     if (data.game === 'football' && fbState) {
@@ -1717,7 +1769,7 @@ document.addEventListener('DOMContentLoaded', () => {
       skNextRound();
     } else {
       // Solo practice
-      addSystemMessage('⚠️ Solo mode — ask others to !join for multiplayer.');
+      addSystemMessage('⚠️ Solo mode — others will get an invite popup when you start!');
       skNextRound();
     }
   }
@@ -2361,7 +2413,7 @@ document.addEventListener('DOMContentLoaded', () => {
   ];
 
   function launchPixelDuel(){
-    if(activeGame.players.length<2){addSystemMessage('⚠️ Pixel Duel needs 2 players. Ask someone to !join!');return;}
+    if(activeGame.players.length<2){addSystemMessage('⚠️ Pixel Duel needs 2 players. Wait for someone to accept the invite!');return;}
     goShow('gscreen-pixelduel');
     const p1n=activeGame.players[0],p2n=activeGame.players[1];
 
@@ -3124,7 +3176,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Route incoming game messages from other players
     if (data.username !== myUsername) handleIncomingGameMsg(data.username, data.message);
     // Hide internal game protocol messages from chat UI
-    if (data.message && data.message.startsWith('🎮!launch:')) return;
     // Skip server echo of our own messages — we already rendered them locally
     if (data.senderId === mySocketId || data.username === myUsername) return;
     addMessage(data, false);

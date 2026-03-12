@@ -418,6 +418,26 @@ io.on('connection', (socket) => {
     socket.to(roomName).emit('userTyping', { username, isTyping });
   });
 
+  // ── Minigame: broadcast position/state to room ──
+  socket.on('gameState', ({ roomName, game, payload }) => {
+    socket.to(roomName).emit('gameState', { game, payload });
+  });
+
+  // ── Minigame: host broadcasts invite popup to all players ──
+  socket.on('gameInvite', ({ roomName, game, gameName, hostUsername }) => {
+    socket.to(roomName).emit('gameInvite', { game, gameName, hostUsername });
+  });
+
+  // ── Minigame: host launches game to all players ──
+  socket.on('gameLaunch', ({ roomName, game, players }) => {
+    socket.to(roomName).emit('gameLaunch', { game, players });
+  });
+
+  // ── Minigame: player responds to invite (yes/no) ──
+  socket.on('gameJoinResponse', ({ roomName, username, accepted, game }) => {
+    socket.to(roomName).emit('gameJoinResponse', { username, accepted, game });
+  });
+
   socket.on('disconnect', () => {
     console.log(`🔌 Player disconnected: ${socket.id}`);
     

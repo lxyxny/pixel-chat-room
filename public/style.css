@@ -2006,3 +2006,81 @@ input[type="checkbox"] {
   from { transform:translateY(0); opacity:1; }
   to   { transform:translateY(-10px); opacity:0.4; }
 }
+
+/* ── Game Invite Popup ────────────────────────────────────── */
+.game-invite-popup {
+  position: fixed;
+  top: -120px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #0f3460;
+  border: 3px solid #4cc9f0;
+  box-shadow: 0 0 0 2px #000, 0 0 24px rgba(76,201,240,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+  image-rendering: pixelated;
+  font-family: 'Press Start 2P', monospace;
+  transition: top 0.35s cubic-bezier(0.34,1.56,0.64,1);
+  min-width: 280px;
+  max-width: 92vw;
+}
+.game-invite-popup::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border: 1px solid rgba(76,201,240,0.2);
+  pointer-events: none;
+}
+.game-invite-popup.visible { top: 16px; }
+.gip-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 6px rgba(76,201,240,0.7));
+}
+.gip-body {
+  flex: 1;
+  min-width: 0;
+}
+.gip-title {
+  font-size: 9px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 8px rgba(76,201,240,0.6);
+  margin-bottom: 4px;
+}
+.gip-host {
+  font-size: 6px;
+  color: rgba(255,255,255,0.45);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gip-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 7px;
+  border: 2px solid;
+  padding: 6px 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.1s, box-shadow 0.1s;
+  image-rendering: pixelated;
+}
+.gip-btn:hover  { transform: scale(1.08); }
+.gip-btn:active { transform: scale(0.95); }
+.gip-btn.yes {
+  background: #4cc9f0;
+  border-color: #fff;
+  color: #000;
+  box-shadow: 0 0 10px rgba(76,201,240,0.6);
+}
+.gip-btn.no {
+  background: transparent;
+  border-color: rgba(255,255,255,0.3);
+  color: rgba(255,255,255,0.5);
+}
+.gip-btn.no:hover { border-color: #e94560; color: #e94560; }
