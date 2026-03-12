@@ -1177,26 +1177,32 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 1000);
 
     // Position broadcast
+    // Player position broadcast — 20Hz
     const bcInt = setInterval(() => {
       if (!activeGame || fbState.over) { clearInterval(bcInt); return; }
       const me = fbState.players.find(p => p.isMe);
-      if (me) {
-        const payload = { username: myUsername, x: me.x, y: me.y, vx: me.vx, vy: me.vy };
-        // Host broadcasts authoritative ball state every tick
-        if (myRole === 'owner' && fbState.ball) {
-          payload.ball = { x: fbState.ball.x, y: fbState.ball.y, vx: fbState.ball.vx, vy: fbState.ball.vy };
-        }
-        // Flush a pending kick event from non-host
-        if (fbState._pendingKick) {
-          payload.kick = fbState._pendingKick;
-          fbState._pendingKick = null;
-        }
-        socket.emit('gameState', { roomName: currentRoom, game: 'football', payload });
+      if (!me) return;
+      const payload = { username: myUsername, x: me.x, y: me.y, vx: me.vx, vy: me.vy };
+      // Flush pending kick from non-host (sent to host on next tick)
+      if (fbState._pendingKick) {
+        payload.kick = fbState._pendingKick;
+        fbState._pendingKick = null;
       }
+      socket.emit('gameState', { roomName: currentRoom, game: 'football', payload });
     }, 50);
 
+    // Ball broadcast — host only, 30Hz (faster than player pos)
+    const ballBcInt = setInterval(() => {
+      if (!activeGame || fbState.over) { clearInterval(ballBcInt); return; }
+      if (myRole === 'owner' && fbState.ball) {
+        const b = fbState.ball;
+        socket.emit('gameState', { roomName: currentRoom, game: 'football',
+          payload: { ballUpdate: true, x: b.x, y: b.y, vx: b.vx, vy: b.vy } });
+      }
+    }, 33);
+
     $g('fb-quit')?.addEventListener('click', () => {
-      clearInterval(timerInt); clearInterval(bcInt);
+      clearInterval(timerInt); clearInterval(bcInt); clearInterval(ballBcInt);
       cleanupFB(onKD, onKU);
     });
 
@@ -1313,42 +1319,60 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Ball physics — everyone predicts locally (host is authoritative) ──
     const b = fbState.ball;
 
-    // Weather: friction modifiers
-    let ballFriction = FB_FRICTION;
-    if (wo.weather === 'rain')  ballFriction = 0.990; // more slippery, slides more
-    if (wo.weather === 'storm') ballFriction = 0.993;
-    if (wo.weather === 'snow')  ballFriction = 0.988;
-    if (wo.weather === 'fog')   ballFriction = FB_FRICTION;
-    if (wo.pitch === 'astro')   ballFriction = 0.978; // faster surface
-    if (wo.pitch === 'sand')    ballFriction = 0.965; // slower
-    if (wo.pitch === 'mud')     ballFriction = 0.955;
-    if (wo.pitch === 'snow')    ballFriction = 0.985;
+    if (myRole !== 'owner') {
+      // NON-HOST: do not simulate ball physics — just interpolate toward last received snapshot
+      if (b._tx !== undefined) {
+        // Predict forward with received velocity
+        b.x += b._tvx * dt;
+        b.y += b._tvy * dt;
+        // Then blend toward authoritative position
+        const ex = b._tx - b.x, ey = b._ty - b.y;
+        const dist = Math.hypot(ex, ey);
+        const alpha = dist > 80 ? 0.5 : dist > 20 ? 0.25 : 0.08;
+        b.x += ex * alpha;
+        b.y += ey * alpha;
+        // Decay predicted velocity toward received velocity
+        b._tvx += (b.vx - b._tvx) * 0.15;
+        b._tvy += (b.vy - b._tvy) * 0.15;
+      }
+      b.spinAngle = (b.spinAngle + b.spin * 0.06 * dt) % (Math.PI * 2);
+      b.spin *= Math.pow(0.88, dt);
+    } else {
+      // HOST: run full physics
+      let ballFriction = FB_FRICTION;
+      if (wo.weather === 'rain')  ballFriction = 0.990;
+      if (wo.weather === 'storm') ballFriction = 0.993;
+      if (wo.weather === 'snow')  ballFriction = 0.988;
+      if (wo.pitch === 'astro')   ballFriction = 0.978;
+      if (wo.pitch === 'sand')    ballFriction = 0.965;
+      if (wo.pitch === 'mud')     ballFriction = 0.955;
+      if (wo.pitch === 'snow')    ballFriction = 0.985;
 
-    // Weather: wind force on ball
-    let windX = 0, windY = 0;
-    if (wo.weather === 'wind' || wo.weather === 'storm') {
-      const windStr = wo.weather === 'storm' ? 0.10 : 0.06;
-      windX = Math.cos(fbState.windAngle) * windStr;
-      windY = Math.sin(fbState.windAngle) * windStr;
+      let windX = 0, windY = 0;
+      if (wo.weather === 'wind' || wo.weather === 'storm') {
+        const windStr = wo.weather === 'storm' ? 0.10 : 0.06;
+        windX = Math.cos(fbState.windAngle) * windStr;
+        windY = Math.sin(fbState.windAngle) * windStr;
+      }
+
+      const steps = Math.max(1, Math.ceil(dt));
+      const dts   = dt / steps;
+      for (let s = 0; s < steps; s++) {
+        b.vx += windX * dts; b.vy += windY * dts;
+        b.x  += b.vx * dts; b.y  += b.vy * dts;
+        b.vx *= Math.pow(ballFriction, dts);
+        b.vy *= Math.pow(ballFriction, dts);
+      }
+      b.spin     *= Math.pow(0.88, dt);
+      b.spinAngle = (b.spinAngle + b.spin * 0.06 * dt) % (Math.PI * 2);
+      const bSpeedNow = Math.hypot(b.vx, b.vy);
+      if (bSpeedNow < 0.5) b.spin = 0;
     }
 
-    const steps = Math.max(1, Math.ceil(dt));
-    const dts   = dt / steps;
-    for (let s = 0; s < steps; s++) {
-      b.vx += windX * dts;
-      b.vy += windY * dts;
-      b.x  += b.vx * dts;
-      b.y  += b.vy * dts;
-      b.vx *= Math.pow(ballFriction, dts);
-      b.vy *= Math.pow(ballFriction, dts);
-    }
-    b.spin     *= Math.pow(0.88, dt);  // spin decays fast
-    b.spinAngle = (b.spinAngle + b.spin * 0.06 * dt) % (Math.PI * 2);
-    // Zero spin when ball is nearly stopped (prevents spiral dribbling)
-    const bSpeedNow = Math.hypot(b.vx, b.vy);
-    if (bSpeedNow < 0.5) b.spin = 0;
-
-    // ── Wall / goal collisions ──
+    // ── Wall / goal collisions — host only ──
+    if (myRole !== 'owner') {
+      // Non-host skips all collision — host handles it and broadcasts result
+    } else {
     const gTop = (FB_VH - FB_GOAL_H) / 2;
     const gBot = gTop + FB_GOAL_H;
     const bMinX = FB_BRAD, bMaxX = FB_VW - FB_BRAD;
@@ -1426,6 +1450,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     }
+
+    } // end host-only collision block
 
     // ── Weather particle update (in tick, not draw) ──
     const wopt2 = fbState.opts || {};
@@ -1929,41 +1955,69 @@ document.addEventListener('DOMContentLoaded', () => {
   // Receive opponents' positions
   socket.on('gameState', data => {
     if (data.game === 'football' && fbState) {
-      const p = fbState.players.find(p => p.name === data.payload.username && !p.isMe);
-      if (p) {
-        // Store received state as interpolation target
-        p._tx = data.payload.x; p._ty = data.payload.y;
-        p._tvx = data.payload.vx||0; p._tvy = data.payload.vy||0;
-      }
-      // Non-hosts reconcile predicted ball with host authoritative snapshot
-      if (data.payload.ball && myRole !== 'owner') {
-        const b = fbState.ball, ab = data.payload.ball;
-        // Blend: if far off, snap; if close, lerp smoothly
-        const dist = Math.hypot(b.x - ab.x, b.y - ab.y);
-        const blend = dist > 60 ? 1 : dist > 20 ? 0.35 : 0.15;
-        b.x  += (ab.x  - b.x)  * blend;
-        b.y  += (ab.y  - b.y)  * blend;
-        b.vx += (ab.vx - b.vx) * blend;
-        b.vy += (ab.vy - b.vy) * blend;
-      }
-      // Apply kick from non-host player (host applies it to its physics)
-      if (data.payload.kick && myRole === 'owner') {
-        const kb = data.payload.kick;
-        fbState.ball.vx = kb.vx; fbState.ball.vy = kb.vy;
-        fbState.ball.x  = kb.bx; fbState.ball.y  = kb.by;
+      const pl = data.payload;
+      if (pl.ballUpdate) {
+        // Dedicated ball snapshot from host — store as interpolation target
+        if (myRole !== 'owner') {
+          const b = fbState.ball;
+          b._tx = pl.x; b._ty = pl.y;
+          b._tvx = pl.vx; b._tvy = pl.vy;
+          // Also update actual vx/vy so prediction uses latest velocity
+          b.vx = pl.vx; b.vy = pl.vy;
+        }
+      } else {
+        // Player position update
+        const p = fbState.players.find(p => p.name === pl.username && !p.isMe);
+        if (p) {
+          p._tx = pl.x; p._ty = pl.y;
+          p._tvx = pl.vx||0; p._tvy = pl.vy||0;
+        }
+        // Apply kick from non-host (host integrates it directly)
+        if (pl.kick && myRole === 'owner') {
+          fbState.ball.vx = pl.kick.vx; fbState.ball.vy = pl.kick.vy;
+          fbState.ball.x  = pl.kick.bx; fbState.ball.y  = pl.kick.by;
+        }
       }
     }
     if (data.game === 'pixelduel' && pdState) {
-      const p = pdState.players.find(p => p.name === data.payload.username && !p.isMe);
-      if (p) {
-        // Store as interpolation targets
-        p._tx = data.payload.x; p._ty = data.payload.y;
-        p.hp = data.payload.hp ?? p.hp;
-        if (data.payload.angle !== undefined) p._tangle = data.payload.angle;
-      }
-      // Non-host receives authoritative bullet list from host
-      if (data.payload.bullets && myRole !== 'owner') {
-        pdState.bullets = data.payload.bullets;
+      const pl = data.payload;
+      if (pl.fullState && myRole !== 'owner') {
+        // Non-host applies authoritative state from host
+        pl.players.forEach(sp => {
+          const p = pdState.players.find(p => p.name === sp.name);
+          if (!p) return;
+          if (!p.isMe) {
+            p._tx = sp.x; p._ty = sp.y;
+            p._tangle = sp.angle;
+          }
+          // HP and score always authoritative from host
+          p.hp = sp.hp; p.score = sp.score;
+          if (sp.flashT > p.flashT) p.flashT = sp.flashT;
+        });
+        pdState.bullets = pl.bullets || [];
+        // Update HUD
+        updatePdHP();
+        $g('pd-p1-score').textContent = pdState.players[0].score;
+        $g('pd-p2-score').textContent = pdState.players[1].score;
+        // Sync round state
+        if (pl.roundOver && !pdState.roundOver) pdState.roundOver = true;
+        if (pl.round && pl.round !== pdState.round) {
+          pdState.round = pl.round;
+          $g('pd-round-label').textContent = 'Round '+pdState.round+'/'+pdState.maxRounds;
+        }
+        if (pl.over && !pdState.over) {
+          pdState.over = true;
+          cancelAnimationFrame(pdRAF); pdRAF = null;
+          setTimeout(goHide, 4000);
+        }
+      } else if (pl.input && myRole === 'owner') {
+        // Host receives movement + shoot intent from non-host
+        const p = pdState.players.find(p => p.name === pl.username && !p.isMe);
+        if (p) {
+          p._tx = pl.x; p._ty = pl.y;
+          p._tangle = pl.angle;
+        }
+        if (pl.shoot) pdState._remoteShoot = { username: pl.username };
       }
     }
     if (data.game === 'pong' && pongState) {
@@ -2728,31 +2782,53 @@ document.addEventListener('DOMContentLoaded', () => {
     const onKU=e=>{delete pdState.keys[e.key];};
     window.addEventListener('keydown',onKD);window.addEventListener('keyup',onKU);
 
-    // Mouse aiming for local player
-    canvas.onmousemove=e=>{
+    // Mouse aiming — convert screen to world coordinates properly
+    const onMouseMove=e=>{
       if(!pdState)return;
       const me=pdState.players.find(p=>p.isMe);
       if(!me)return;
       const rect=canvas.getBoundingClientRect();
-      const scaleX=canvas.width/rect.width, scaleY=canvas.height/rect.height;
-      const mx=(e.clientX-rect.left)*scaleX, my=(e.clientY-rect.top)*scaleY;
-      // Convert canvas coords to world coords
-      const cw=canvas.width,ch=canvas.height;
-      const s=Math.min(cw/PD_VW,ch/PD_VH);
-      const ox=(cw-PD_VW*s)/2, oy=(ch-PD_VH*s)/2;
-      const wx=(mx-ox)/s, wy=(my-oy)/s;
-      me.angle=Math.atan2(wy-me.y, wx-me.x);
+      // Map mouse to canvas pixel, then canvas pixel to world coords
+      const cx2=canvas.width, cy2=canvas.height;
+      const s2=Math.min(cx2/PD_VW,cy2/PD_VH);
+      const ox2=(cx2-PD_VW*s2)/2, oy2=(cy2-PD_VH*s2)/2;
+      const mx=((e.clientX-rect.left)/rect.width)*cx2;
+      const my=((e.clientY-rect.top)/rect.height)*cy2;
+      const wx=(mx-ox2)/s2, wy=(my-oy2)/s2;
+      me.angle=Math.atan2(wy-me.y,wx-me.x);
     };
+    canvas.addEventListener('mousemove',onMouseMove);
+    canvas.addEventListener('mousemove',()=>{ if(pdState)pdState._mouseMoved=true; },{once:true});
+    // Left-click to shoot too
+    const onMouseClick=e=>{
+      if(e.button===0&&pdState&&!pdState.roundOver){
+        const me=pdState.players.find(p=>p.isMe);
+        if(me)pdState._clickShoot=true;
+      }
+    };
+    canvas.addEventListener('mousedown',onMouseClick);
 
     const bcInt=setInterval(()=>{
       if(!pdState||pdState.over){clearInterval(bcInt);return;}
       const me=pdState.players.find(p=>p.isMe);
-      if(!me) return;
-      const payload={username:me.name,x:me.x,y:me.y,hp:me.hp,angle:me.angle};
-      // Host broadcasts all bullets so non-host sees them
-      if(myRole==='owner') payload.bullets=pdState.bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,owner:b.owner,life:b.life}));
-      socket.emit('gameState',{roomName:currentRoom,game:'pixelduel',payload});
-    },50);
+      if(!me)return;
+      if(myRole==='owner'){
+        // Host broadcasts full authoritative state every 33ms
+        socket.emit('gameState',{roomName:currentRoom,game:'pixelduel',payload:{
+          fullState:true,
+          players:pdState.players.map(p=>({name:p.name,x:p.x,y:p.y,hp:p.hp,angle:p.angle,score:p.score,flashT:p.flashT})),
+          bullets:pdState.bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,owner:b.owner,life:b.life})),
+          roundOver:pdState.roundOver,round:pdState.round,over:pdState.over
+        }});
+      } else {
+        // Non-host sends only movement + aim + shoot intent
+        socket.emit('gameState',{roomName:currentRoom,game:'pixelduel',payload:{
+          input:true,username:me.name,x:me.x,y:me.y,angle:me.angle,
+          shoot:pdState._wantsShoot||false
+        }});
+        pdState._wantsShoot=false;
+      }
+    },33);
 
     function pdLoop(){
       if(!pdState||pdState.over)return;
@@ -2766,7 +2842,8 @@ document.addEventListener('DOMContentLoaded', () => {
     $g('pd-quit')?.addEventListener('click',()=>{
       cancelAnimationFrame(pdRAF);pdRAF=null;clearInterval(bcInt);
       window.removeEventListener('keydown',onKD);window.removeEventListener('keyup',onKU);
-      canvas.onmousemove=null;
+      canvas.removeEventListener('mousemove',onMouseMove);
+      canvas.removeEventListener('mousedown',onMouseClick);
       activeGame=null;goHide();
     });
   }
@@ -2782,85 +2859,95 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function pdTick(){
-    if(!pdState||pdState.roundOver)return;
+    if(!pdState)return;
+
+    // ── Every client: move local player, send inputs ──
     const k=pdState.keys;
-
-    pdState.players.forEach((p,idx)=>{
-      if(!p.isMe)return;
-
-      // WASD movement (top-down — no gravity)
+    const me=pdState.players.find(p=>p.isMe);
+    if(me&&!pdState.roundOver){
       const left =k['a']||k['A']||k['ArrowLeft'];
       const right=k['d']||k['D']||k['ArrowRight'];
       const up   =k['w']||k['W']||k['ArrowUp'];
       const down =k['s']||k['S']||k['ArrowDown'];
-
       let ax=0,ay=0;
       if(left)ax-=1; if(right)ax+=1;
       if(up)ay-=1;   if(down)ay+=1;
       if(ax&&ay){ax*=0.707;ay*=0.707;}
-
-      const lerp=0.18;
-      p.vx+=(ax*PD_PSPD-p.vx)*lerp;
-      p.vy+=(ay*PD_PSPD-p.vy)*lerp;
-
-      // Move X then Y with wall separation
-      let nx=p.x+p.vx, ny=p.y+p.vy;
-      if(!pdWallCollide(nx,p.y,PD_PRAD))p.x=nx; else p.vx=0;
-      if(!pdWallCollide(p.x,ny,PD_PRAD))p.y=ny; else p.vy=0;
-      p.x=Math.max(PD_PRAD,Math.min(PD_VW-PD_PRAD,p.x));
-      p.y=Math.max(PD_PRAD,Math.min(PD_VH-PD_PRAD,p.y));
-
-      // Keyboard aiming fallback (when no mouse)
-      if(left||right||up||down){
-        if(ax||ay) p.angle=Math.atan2(ay,ax);
+      me.vx+=(ax*PD_PSPD-me.vx)*0.18;
+      me.vy+=(ay*PD_PSPD-me.vy)*0.18;
+      let nx=me.x+me.vx, ny=me.y+me.vy;
+      if(!pdWallCollide(nx,me.y,PD_PRAD))me.x=nx; else me.vx=0;
+      if(!pdWallCollide(me.x,ny,PD_PRAD))me.y=ny; else me.vy=0;
+      me.x=Math.max(PD_PRAD,Math.min(PD_VW-PD_PRAD,me.x));
+      me.y=Math.max(PD_PRAD,Math.min(PD_VH-PD_PRAD,me.y));
+      // Keyboard aim fallback
+      if((ax||ay)&&!pdState._mouseMoved)me.angle=Math.atan2(ay,ax);
+      if(me.flashT>0)me.flashT--;
+      // Shoot intent — key or click
+      const shootKey=k[' ']||k['f']||k['F']||pdState._clickShoot;
+      pdState._clickShoot=false;
+      if(shootKey&&me.reloadT<=0){
+        me.reloadT=18;
+        if(myRole==='owner'){
+          // Host fires bullet immediately
+          const meIdx=pdState.players.indexOf(me);
+          pdState.bullets.push({x:me.x+Math.cos(me.angle)*(PD_PRAD+6),y:me.y+Math.sin(me.angle)*(PD_PRAD+6),vx:Math.cos(me.angle)*PD_BSPD,vy:Math.sin(me.angle)*PD_BSPD,owner:meIdx,life:70});
+          me.vx-=Math.cos(me.angle)*0.8; me.vy-=Math.sin(me.angle)*0.8;
+        } else {
+          // Non-host flags shoot intent — sent to host in next broadcast
+          pdState._wantsShoot=true;
+          // Local muzzle flash only
+          me.vx-=Math.cos(me.angle)*0.8; me.vy-=Math.sin(me.angle)*0.8;
+        }
       }
-
-      if(p.flashT>0)p.flashT--;
-
-      // Shoot — SPACE or F
-      const shootKey=k[' ']||k['f']||k['F'];
-      if(shootKey&&p.reloadT<=0){
-        const bx=p.x+Math.cos(p.angle)*(PD_PRAD+6);
-        const by=p.y+Math.sin(p.angle)*(PD_PRAD+6);
-        pdState.bullets.push({x:bx,y:by,vx:Math.cos(p.angle)*PD_BSPD,vy:Math.sin(p.angle)*PD_BSPD,owner:idx,life:70});
-        p.reloadT=18;
-        // Recoil
-        p.vx-=Math.cos(p.angle)*0.8;
-        p.vy-=Math.sin(p.angle)*0.8;
-      }
-      if(p.reloadT>0)p.reloadT--;
-    });
-
-    // Smoothly interpolate remote players toward their received positions
-    pdState.players.forEach(p => {
-      if (p.isMe) return;
-      if (p._tx !== undefined) {
-        const dx = p._tx - p.x, dy = p._ty - p.y;
-        const dist = Math.hypot(dx, dy);
-        const alpha = dist > 30 ? 0.35 : 0.2;
-        p.x += dx * alpha; p.y += dy * alpha;
-      }
-      if (p._tangle !== undefined) {
-        let da = p._tangle - p.angle;
-        while (da > Math.PI) da -= Math.PI*2;
-        while (da < -Math.PI) da += Math.PI*2;
-        p.angle += da * 0.3;
-      }
-      if (p.flashT > 0) p.flashT--;
-    });
-
-    // Bullets — only host runs physics (non-host gets bullets via gameState sync)
-    if (myRole !== 'owner') {
-      // Non-host: just advance particle effects, skip hit detection
-      if(pdState.particles){
-        pdState.particles=pdState.particles.filter(pt=>{ pt.x+=pt.vx;pt.y+=pt.vy;pt.life--;pt.vx*=0.92;pt.vy*=0.92; return pt.life>0; });
-      }
-      return;
+      if(me.reloadT>0)me.reloadT--;
     }
+
+    // ── Interpolate remote player toward received position ──
+    pdState.players.forEach(p=>{
+      if(p.isMe)return;
+      if(p._tx!==undefined){
+        const dx=p._tx-p.x,dy=p._ty-p.y;
+        const dist=Math.hypot(dx,dy);
+        p.x+=dx*(dist>30?0.35:0.2);
+        p.y+=dy*(dist>30?0.35:0.2);
+      }
+      if(p._tangle!==undefined){
+        let da=p._tangle-p.angle;
+        while(da>Math.PI)da-=Math.PI*2;
+        while(da<-Math.PI)da+=Math.PI*2;
+        p.angle+=da*0.35;
+      }
+      if(p.flashT>0)p.flashT--;
+    });
+
+    // ── Particles (all clients) ──
+    if(pdState.particles){
+      pdState.particles=pdState.particles.filter(pt=>{
+        pt.x+=pt.vx;pt.y+=pt.vy;pt.life--;pt.vx*=0.92;pt.vy*=0.92;
+        return pt.life>0;
+      });
+    }
+
+    // ── HOST ONLY: bullets, hit detection, HP, round logic ──
+    if(myRole!=='owner')return;
+
+    // Apply shoot intent from remote player
+    if(pdState._remoteShoot){
+      const rs=pdState._remoteShoot; pdState._remoteShoot=null;
+      const remP=pdState.players.find(p=>p.name===rs.username&&!p.isMe);
+      if(remP&&remP.reloadT<=0){
+        const ridx=pdState.players.indexOf(remP);
+        pdState.bullets.push({x:remP.x+Math.cos(remP.angle)*(PD_PRAD+6),y:remP.y+Math.sin(remP.angle)*(PD_PRAD+6),vx:Math.cos(remP.angle)*PD_BSPD,vy:Math.sin(remP.angle)*PD_BSPD,owner:ridx,life:70});
+        remP.reloadT=18;
+        remP.vx-=Math.cos(remP.angle)*0.8; remP.vy-=Math.sin(remP.angle)*0.8;
+      }
+    }
+
     pdState.bullets=pdState.bullets.filter(b=>{
       b.x+=b.vx; b.y+=b.vy; b.life--;
       if(b.life<=0||b.x<0||b.x>PD_VW||b.y<0||b.y>PD_VH)return false;
-      if(pdWallCollide(b.x,b.y,4))return false;  // bullet hits wall
+      if(pdWallCollide(b.x,b.y,4))return false;
       let hit=false;
       pdState.players.forEach((p,idx)=>{
         if(idx===b.owner||hit)return;
@@ -2868,19 +2955,11 @@ document.addEventListener('DOMContentLoaded', () => {
           p.hp=Math.max(0,p.hp-20); p.flashT=8; hit=true;
           pdSpawnHit(b.x,b.y,pdState.players[b.owner]?.color||'#fff');
           updatePdHP();
-          if(p.hp<=0)pdRoundOver(b.owner);
+          if(p.hp<=0)pdRoundOver(pdState.players.indexOf(pdState.players[b.owner]));
         }
       });
       return !hit;
     });
-
-    // Particles
-    if(pdState.particles){
-      pdState.particles=pdState.particles.filter(pt=>{
-        pt.x+=pt.vx;pt.y+=pt.vy;pt.life--;pt.vx*=0.92;pt.vy*=0.92;
-        return pt.life>0;
-      });
-    }
   }
 
   function updatePdHP(){
