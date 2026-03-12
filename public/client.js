@@ -812,6 +812,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const GAME_NAMES = { football:'⚽ Football', skribbl:'🎨 Skribbl', quiz:'📚 Quiz Battle', wordbomb:'💣 Word Bomb', pixelduel:'🔫 Pixel Duel', pong:'🏓 Pong', snake:'🐍 Snake Race', typing:'⌨️ Typing Sprint' };
 
+  // ── Football match options state (host only) ─────────────
+  const fbOpts = { pitch: 'classic', weather: 'clear', time: 'day' };
+
   function startGameLobby(type) {
     activeGame = {
       type, state: 'lobby',
@@ -821,12 +824,32 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const gameName = GAME_NAMES[type] || type;
     $g('gwait-title').textContent = gameName;
+    // Show football options only for host on football
+    const optPanel = $g('gwait-fb-options');
+    if (optPanel) optPanel.style.display = (type === 'football' && myRole === 'owner') ? '' : 'none';
+    // Reset to defaults
+    fbOpts.pitch = 'classic'; fbOpts.weather = 'clear'; fbOpts.time = 'day';
+    ['fb-opt-pitch','fb-opt-weather','fb-opt-time'].forEach(id => {
+      $g(id)?.querySelectorAll('.fb-opt-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.val === fbOpts[id.replace('fb-opt-','')]);
+      });
+    });
     renderWaitList();
     // Send invite popup to everyone else in the room via socket
     socket.emit('gameInvite', { roomName: currentRoom, game: type, gameName, hostUsername: myUsername });
     addSystemMessage('🎮 Invite sent! Waiting for players to join…');
     goShow('gscreen-wait');
   }
+
+  // Option button clicks
+  ['fb-opt-pitch','fb-opt-weather','fb-opt-time'].forEach(id => {
+    $g(id)?.addEventListener('click', e => {
+      const btn = e.target.closest('.fb-opt-btn'); if (!btn) return;
+      const key = id.replace('fb-opt-','');
+      fbOpts[key] = btn.dataset.val;
+      $g(id).querySelectorAll('.fb-opt-btn').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
 
   function renderWaitList() {
     const el = $g('gwait-players');
@@ -840,7 +863,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     const info = $g('gwait-info');
     if (info) info.textContent = activeGame.players.length + ' player(s) in lobby';
-    // Owner sees START button; others see a hint
     const startBtn = $g('gwait-start');
     const nonHostMsg = $g('gwait-nonhost-msg');
     if (startBtn) startBtn.style.display = myRole === 'owner' ? '' : 'none';
@@ -860,9 +882,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!activeGame) return;
     const t = activeGame.type;
     addSystemMessage('🎮 ' + (GAME_NAMES[t]||t.toUpperCase()) + ' — STARTING!');
-    // Tell all joined players to launch via dedicated socket event
     if (myRole === 'owner') {
-      socket.emit('gameLaunch', { roomName: currentRoom, game: t, players: activeGame.players });
+      const opts = t === 'football' ? { ...fbOpts } : null;
+      socket.emit('gameLaunch', { roomName: currentRoom, game: t, players: activeGame.players, opts });
+      if (opts) activeGame.matchOpts = opts; // store locally too
     }
     _doLaunchGame(t);
   }
@@ -1061,7 +1084,11 @@ document.addEventListener('DOMContentLoaded', () => {
       goalFlash: 0,
       goalMsg: '',
       over: false,
-      isAuthority: myRole === 'owner',  // only host runs ball physics
+      isAuthority: myRole === 'owner',
+      // Match settings
+      opts: activeGame.matchOpts || { pitch: 'classic', weather: 'clear', time: 'day' },
+      weatherParticles: [],
+      windAngle: Math.random() * Math.PI * 2, // randomise wind direction each match
       // letterbox transform (set by resizeFB)
       ox: 0, oy: 0, scale: 1,
     };
@@ -1074,14 +1101,19 @@ document.addEventListener('DOMContentLoaded', () => {
     $g('fb-red-label').textContent  = activeGame.teamRed.join(' + ');
     $g('fb-score').textContent      = '0 — 0';
     $g('fb-timer-disp').textContent = '4:00';
+    // Weather HUD
+    const wIcons = { clear:'☀️', rain:'🌧️', storm:'⛈️', snow:'❄️', wind:'💨', fog:'🌫️' };
+    const tIcons = { day:'', dusk:'🌆', night:'🌙' };
+    const opts = fbState.opts;
+    const wHud = $g('fb-weather-disp');
+    if (wHud) wHud.textContent = (tIcons[opts.time]||'') + ' ' + (wIcons[opts.weather]||'');
 
     // Letterbox: keep field aspect ratio, add padding
     const wrap = canvas.parentElement;
     function resizeFB() {
-      // Use getBoundingClientRect for accurate size after flex layout
-      const rect = canvas.getBoundingClientRect();
-      const ww = rect.width  || wrap.clientWidth  || window.innerWidth;
-      const wh = rect.height || wrap.clientHeight || (window.innerHeight - 60);
+      const ww = canvas.offsetWidth  || window.innerWidth;
+      const wh = canvas.offsetHeight || (window.innerHeight - 60);
+      if (ww < 10 || wh < 10) return; // not laid out yet
       canvas.width  = ww;
       canvas.height = wh;
       const availW = ww - FB_PAD * 2;
@@ -1118,10 +1150,15 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!activeGame || fbState.over) { clearInterval(bcInt); return; }
       const me = fbState.players.find(p => p.isMe);
       if (me) {
-        const payload = { username: myUsername, x: me.x, y: me.y };
-        // Host also broadcasts ball state so all clients stay in sync
+        const payload = { username: myUsername, x: me.x, y: me.y, vx: me.vx, vy: me.vy };
+        // Host broadcasts authoritative ball state every tick
         if (myRole === 'owner' && fbState.ball) {
           payload.ball = { x: fbState.ball.x, y: fbState.ball.y, vx: fbState.ball.vx, vy: fbState.ball.vy };
+        }
+        // Flush a pending kick event from non-host
+        if (fbState._pendingKick) {
+          payload.kick = fbState._pendingKick;
+          fbState._pendingKick = null;
         }
         socket.emit('gameState', { roomName: currentRoom, game: 'football', payload });
       }
@@ -1136,8 +1173,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function fbLoop(now) {
       if (fbState.over || !activeGame) return;
       // Resize canvas every frame if dimensions changed (handles post-loading-screen reveal)
-      const cw = canvas.getBoundingClientRect().width;
-      if (cw > 0 && Math.abs(canvas.width - cw) > 2) resizeFB();
+      const cw = canvas.offsetWidth;
+      if (cw > 10 && Math.abs(canvas.width - cw) > 2) resizeFB();
       // Delta-time capped at 50ms (avoids spiral of death on tab-blur)
       const dt = Math.min((now - lastFbTime) / 16.667, 3); // normalised to 60fps units
       lastFbTime = now;
@@ -1174,7 +1211,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (tlen > 0) { tx = tx/tlen * FB_PLAYER_MAX; ty = ty/tlen * FB_PLAYER_MAX; }
 
       // Exponential lerp — lower values = more inertia/momentum
-      const accel  = tlen > 0 ? 0.09 : 0.07;  // sluggish with drift
+      // Weather makes it more slippery (lower accel = more drift)
+      const wo2 = fbState.opts;
+      const slipFactor = wo2.weather==='rain'?0.55 : wo2.weather==='storm'?0.42 : wo2.weather==='snow'?0.38 : wo2.pitch==='mud'?0.30 : wo2.pitch==='snow'?0.60 : 1.0;
+      const accel  = (tlen > 0 ? 0.09 : 0.07) * slipFactor;
       const factor = 1 - Math.pow(1 - accel, dt);
       me.vx += (tx - me.vx) * factor;
       me.vy += (ty - me.vy) * factor;
@@ -1200,28 +1240,65 @@ document.addEventListener('DOMContentLoaded', () => {
           me.kickCooldown = 22;
           b.x = me.x + knx * (FB_PRAD + FB_BRAD + 1.5);
           b.y = me.y + kny * (FB_PRAD + FB_BRAD + 1.5);
+          // Non-hosts store kick so it gets forwarded to host on next broadcast
+          if (myRole !== 'owner') {
+            fbState._pendingKick = { vx: b.vx, vy: b.vy, bx: b.x, by: b.y };
+          }
         }
       }
       me.spaceWas = spaceNow;
     }
 
+    // ── Weather effects on player movement ──
+    const wo = fbState.opts;
+    let playerFriction = 1; // multiplier on player deceleration (>1 = more slippery)
+    if (wo.weather === 'rain')  playerFriction = 0.55;
+    if (wo.weather === 'storm') playerFriction = 0.42;
+    if (wo.weather === 'snow')  playerFriction = 0.38;
+    if (wo.weather === 'mud' || wo.pitch === 'mud') playerFriction = 0.28;
+
     // Move all players
     fbState.players.forEach(p => {
+      if (!p.isMe) { // remote players: apply weather friction to velocity for local smoothing
+        p.vx *= Math.pow(0.88 + playerFriction * 0.06, dt);
+        p.vy *= Math.pow(0.88 + playerFriction * 0.06, dt);
+      }
       p.x = Math.max(FB_PRAD, Math.min(FB_VW - FB_PRAD, p.x + p.vx * dt));
       p.y = Math.max(FB_PRAD, Math.min(FB_VH - FB_PRAD, p.y + p.vy * dt));
       if (p.kickCooldown > 0) p.kickCooldown -= dt;
     });
 
-    // ── Ball physics — only authority (host) runs these ──
-    if (!fbState.isAuthority) return;
+    // ── Ball physics — everyone predicts locally (host is authoritative) ──
     const b = fbState.ball;
+
+    // Weather: friction modifiers
+    let ballFriction = FB_FRICTION;
+    if (wo.weather === 'rain')  ballFriction = 0.990; // more slippery, slides more
+    if (wo.weather === 'storm') ballFriction = 0.993;
+    if (wo.weather === 'snow')  ballFriction = 0.988;
+    if (wo.weather === 'fog')   ballFriction = FB_FRICTION;
+    if (wo.pitch === 'astro')   ballFriction = 0.978; // faster surface
+    if (wo.pitch === 'sand')    ballFriction = 0.965; // slower
+    if (wo.pitch === 'mud')     ballFriction = 0.955;
+    if (wo.pitch === 'snow')    ballFriction = 0.985;
+
+    // Weather: wind force on ball
+    let windX = 0, windY = 0;
+    if (wo.weather === 'wind' || wo.weather === 'storm') {
+      const windStr = wo.weather === 'storm' ? 0.10 : 0.06;
+      windX = Math.cos(fbState.windAngle) * windStr;
+      windY = Math.sin(fbState.windAngle) * windStr;
+    }
+
     const steps = Math.max(1, Math.ceil(dt));
     const dts   = dt / steps;
     for (let s = 0; s < steps; s++) {
+      b.vx += windX * dts;
+      b.vy += windY * dts;
       b.x  += b.vx * dts;
       b.y  += b.vy * dts;
-      b.vx *= Math.pow(FB_FRICTION, dts);
-      b.vy *= Math.pow(FB_FRICTION, dts);
+      b.vx *= Math.pow(ballFriction, dts);
+      b.vy *= Math.pow(ballFriction, dts);
     }
     b.spin     *= Math.pow(0.88, dt);  // spin decays fast
     b.spinAngle = (b.spinAngle + b.spin * 0.06 * dt) % (Math.PI * 2);
@@ -1347,15 +1424,55 @@ document.addEventListener('DOMContentLoaded', () => {
     const cy = y => oy + y * s;
     const cs = v => v * s;
 
-    // ── Canvas background (outside field) ──
-    ctx.fillStyle = '#111';
+    const wo = fbState.opts || {};
+
+    // ── Time of day: canvas background ──
+    const bgColors = { day: '#111', dusk: '#1a0e05', night: '#050510' };
+    ctx.fillStyle = bgColors[wo.time] || '#111';
     ctx.fillRect(0, 0, cw, ch);
+
+    // Night: draw stars in margins
+    if (wo.time === 'night') {
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      for (let i = 0; i < 60; i++) {
+        const sx = (Math.sin(i*137.5)*0.5+0.5)*cw, sy = (Math.sin(i*89.3)*0.5+0.5)*ch;
+        // only draw stars outside the field
+        if (sx < ox || sx > ox+cs(FB_VW) || sy < oy || sy > oy+cs(FB_VH)) {
+          ctx.fillRect(sx, sy, cs(1.2), cs(1.2));
+        }
+      }
+    }
+
+    // ── Pitch surface: pick colours based on pitch type ──
+    const pitchColors = {
+      classic: ['#2a7a2a','#277027'],
+      astro:   ['#1a8a30','#178028'],
+      sand:    ['#c8a96e','#b89858'],
+      snow:    ['#d8e8f0','#c8d8e0'],
+      mud:     ['#5a3a1a','#4a3010'],
+    };
+    const [pC1, pC2] = pitchColors[wo.pitch] || pitchColors.classic;
 
     // ── Grass stripes ──
     const stripes = 10;
     for (let i = 0; i < stripes; i++) {
-      ctx.fillStyle = i % 2 === 0 ? '#2a7a2a' : '#277027';
+      ctx.fillStyle = i % 2 === 0 ? pC1 : pC2;
       ctx.fillRect(cx(i * FB_VW/stripes), cy(0), cs(FB_VW/stripes)+1, cs(FB_VH));
+    }
+
+    // Night/dusk: darken pitch with overlay
+    if (wo.time === 'night') {
+      ctx.fillStyle = 'rgba(0,0,20,0.42)';
+      ctx.fillRect(cx(0), cy(0), cs(FB_VW), cs(FB_VH));
+    } else if (wo.time === 'dusk') {
+      ctx.fillStyle = 'rgba(80,30,0,0.22)';
+      ctx.fillRect(cx(0), cy(0), cs(FB_VW), cs(FB_VH));
+    }
+
+    // Fog overlay
+    if (wo.weather === 'fog') {
+      ctx.fillStyle = 'rgba(200,210,220,0.28)';
+      ctx.fillRect(cx(0), cy(0), cs(FB_VW), cs(FB_VH));
     }
 
     // ── Field border (thick) ──
@@ -1588,6 +1705,62 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillText(fbState.goalMsg, cw/2, ch/2);
       ctx.restore();
     }
+
+    // ── Weather particles ──
+    const wp = fbState.weatherParticles;
+    const wopt = fbState.opts || {};
+    if (wopt.weather === 'rain' || wopt.weather === 'storm') {
+      // Spawn new drops
+      const spawnN = wopt.weather === 'storm' ? 12 : 6;
+      for (let i = 0; i < spawnN; i++) {
+        wp.push({ x: Math.random()*cw, y: -8, vx: wopt.weather==='storm'?-1.5:-0.5, vy: 9+Math.random()*5, life: 1 });
+      }
+      ctx.strokeStyle = 'rgba(140,200,255,0.45)'; ctx.lineWidth = cs(0.7);
+      for (let i = wp.length-1; i >= 0; i--) {
+        const p = wp[i];
+        p.x += p.vx; p.y += p.vy;
+        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x+p.vx*2, p.y+p.vy*2); ctx.stroke();
+        if (p.y > ch + 10) wp.splice(i, 1);
+      }
+    } else if (wopt.weather === 'snow') {
+      for (let i = 0; i < 3; i++) {
+        wp.push({ x: Math.random()*cw, y: -4, vx: (Math.random()-0.5)*0.8, vy: 1.2+Math.random()*1.2, r: cs(1.5+Math.random()*1.5) });
+      }
+      ctx.fillStyle = 'rgba(220,235,255,0.7)';
+      for (let i = wp.length-1; i >= 0; i--) {
+        const p = wp[i];
+        p.x += p.vx + Math.sin(Date.now()*0.001+i)*0.3; p.y += p.vy;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+        if (p.y > ch + 8) wp.splice(i, 1);
+      }
+    }
+    // Cap particle count
+    if (wp.length > 400) wp.splice(0, wp.length - 300);
+
+    // Wind indicator
+    if (wopt.weather === 'wind' || wopt.weather === 'storm') {
+      const wa = fbState.windAngle;
+      const wlx = cw - cs(50), wly = cs(40);
+      ctx.save();
+      ctx.translate(wlx, wly);
+      ctx.strokeStyle = 'rgba(180,220,255,0.6)'; ctx.lineWidth = cs(1.5);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(wa)*cs(20), Math.sin(wa)*cs(20));
+      ctx.stroke();
+      // Arrow head
+      const ax = Math.cos(wa)*cs(20), ay = Math.sin(wa)*cs(20);
+      ctx.fillStyle = 'rgba(180,220,255,0.6)';
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(ax+Math.cos(wa+2.4)*cs(6), ay+Math.sin(wa+2.4)*cs(6));
+      ctx.lineTo(ax+Math.cos(wa-2.4)*cs(6), ay+Math.sin(wa-2.4)*cs(6));
+      ctx.fill();
+      ctx.fillStyle='rgba(180,220,255,0.5)'; ctx.font=`${cs(7)}px 'Press Start 2P',monospace`;
+      ctx.textAlign='center'; ctx.fillText('💨', 0, cs(18));
+      ctx.restore();
+    }
+
     // Pixel-art scanline pass
     drawScanlines(ctx, cw, ch);
   }
@@ -1679,8 +1852,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ── Socket: host launched the game — all joined players start ───────────
-  socket.on('gameLaunch', ({ game, players }) => {
-    if (!players.includes(myUsername)) return;  // we didn't join, ignore
+  socket.on('gameLaunch', ({ game, players, opts }) => {
+    if (!players.includes(myUsername)) return;
     if (!activeGame) {
       activeGame = { type: game, state: 'lobby', players,
         scores: Object.fromEntries(players.map(p=>[p,0])),
@@ -1691,7 +1864,7 @@ document.addEventListener('DOMContentLoaded', () => {
       players.forEach(p => { activeGame.scores[p]  = activeGame.scores[p]  || 0; });
       players.forEach(p => { activeGame.streaks[p] = activeGame.streaks[p] || 0; });
     }
-    // Close invite popup if still open
+    if (opts) activeGame.matchOpts = opts; // store match settings
     const popup = document.getElementById('game-invite-popup');
     if (popup) popup.remove();
     addSystemMessage('🎮 ' + (GAME_NAMES[game]||game.toUpperCase()) + ' — STARTING!');
@@ -1702,12 +1875,23 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('gameState', data => {
     if (data.game === 'football' && fbState) {
       const p = fbState.players.find(p => p.name === data.payload.username && !p.isMe);
-      if (p) { p.x = data.payload.x; p.y = data.payload.y; }
-      // Non-hosts apply ball state from host
+      if (p) { p.x = data.payload.x; p.y = data.payload.y; p.vx = data.payload.vx||0; p.vy = data.payload.vy||0; }
+      // Non-hosts reconcile predicted ball with host authoritative snapshot
       if (data.payload.ball && myRole !== 'owner') {
-        const b = data.payload.ball;
-        fbState.ball.x = b.x; fbState.ball.y = b.y;
-        fbState.ball.vx = b.vx; fbState.ball.vy = b.vy;
+        const b = fbState.ball, ab = data.payload.ball;
+        // Blend: if far off, snap; if close, lerp smoothly
+        const dist = Math.hypot(b.x - ab.x, b.y - ab.y);
+        const blend = dist > 60 ? 1 : dist > 20 ? 0.35 : 0.15;
+        b.x  += (ab.x  - b.x)  * blend;
+        b.y  += (ab.y  - b.y)  * blend;
+        b.vx += (ab.vx - b.vx) * blend;
+        b.vy += (ab.vy - b.vy) * blend;
+      }
+      // Apply kick from non-host player (host applies it to its physics)
+      if (data.payload.kick && myRole === 'owner') {
+        const kb = data.payload.kick;
+        fbState.ball.vx = kb.vx; fbState.ball.vy = kb.vy;
+        fbState.ball.x  = kb.bx; fbState.ball.y  = kb.by;
       }
     }
     if (data.game === 'pixelduel' && pdState) {

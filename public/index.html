@@ -8,7 +8,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Pixel Chat</title>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=1773229991" />
+  <link rel="stylesheet" href="style.css?v=1773305604" />
   <link rel="icon" type="image/png" href="/favicon.png" />
 </head>
 <body>
@@ -408,11 +408,47 @@
 
     <!-- WAITING ROOM -->
     <div id="gscreen-wait" class="gscreen hidden">
-      <div class="gscreen-inner" style="max-width:480px;">
+      <div class="gscreen-inner" style="max-width:560px;">
         <h2 id="gwait-title" class="pixel-title" style="font-size:12px;margin-bottom:4px;"></h2>
         <p class="pixel-hint">Others will get an invite popup · then click START</p>
         <div id="gwait-players" class="gwait-players"></div>
         <p id="gwait-info" class="pixel-hint" style="margin-top:6px;color:var(--pixel-accent);"></p>
+
+        <!-- Football-only match settings -->
+        <div id="gwait-fb-options" style="display:none;margin-top:16px;">
+          <div class="fb-opts-grid">
+            <div class="fb-opt-group">
+              <div class="fb-opt-label">🏟️ PITCH</div>
+              <div class="fb-opt-btns" id="fb-opt-pitch">
+                <button class="fb-opt-btn active" data-val="classic">Classic</button>
+                <button class="fb-opt-btn" data-val="astro">Astroturf</button>
+                <button class="fb-opt-btn" data-val="sand">Sand</button>
+                <button class="fb-opt-btn" data-val="snow">Snow</button>
+                <button class="fb-opt-btn" data-val="mud">Mud</button>
+              </div>
+            </div>
+            <div class="fb-opt-group">
+              <div class="fb-opt-label">🌤️ WEATHER</div>
+              <div class="fb-opt-btns" id="fb-opt-weather">
+                <button class="fb-opt-btn active" data-val="clear">☀️ Clear</button>
+                <button class="fb-opt-btn" data-val="rain">🌧️ Rain</button>
+                <button class="fb-opt-btn" data-val="storm">⛈️ Storm</button>
+                <button class="fb-opt-btn" data-val="snow">❄️ Snow</button>
+                <button class="fb-opt-btn" data-val="wind">💨 Wind</button>
+                <button class="fb-opt-btn" data-val="fog">🌫️ Fog</button>
+              </div>
+            </div>
+            <div class="fb-opt-group">
+              <div class="fb-opt-label">🕐 TIME</div>
+              <div class="fb-opt-btns" id="fb-opt-time">
+                <button class="fb-opt-btn active" data-val="day">🌤 Day</button>
+                <button class="fb-opt-btn" data-val="dusk">🌆 Dusk</button>
+                <button class="fb-opt-btn" data-val="night">🌙 Night</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div style="display:flex;gap:10px;margin-top:20px;justify-content:center;flex-wrap:wrap;">
           <button id="gwait-start" class="pixel-btn rounded">▶ START GAME</button>
           <p id="gwait-nonhost-msg" class="pixel-hint" style="display:none;margin:0;line-height:2.4;">Waiting for host to start…</p>
@@ -429,9 +465,10 @@
           <span id="fb-score" class="fb-score-num">0 — 0</span>
           <span id="fb-red-label"  class="fb-team-label red">Red</span>
           <span id="fb-timer-disp" class="fb-timer">4:00</span>
+          <span id="fb-weather-disp" class="fb-timer" style="margin-left:6px;font-size:8px;opacity:0.7;"></span>
           <button id="fb-quit" class="pixel-btn small rounded" style="margin-left:auto;">✕ Quit</button>
         </div>
-        <canvas id="fb-canvas" style="display:block;width:100%;flex:1;cursor:none;"></canvas>
+        <canvas id="fb-canvas" style="cursor:none;"></canvas>
         <div class="game-hint-bar">WASD / Arrows to move &nbsp;·&nbsp; SPACE to kick — direction depends on where you strike the ball</div>
       </div>
     </div>
@@ -719,6 +756,6 @@
   </script>
   
   <script src="/socket.io/socket.io.js"></script>
-  <script src="client.js?v=1773229991"></script>
+  <script src="client.js?v=1773305604"></script>
 </body>
 </html>
