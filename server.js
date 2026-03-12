@@ -423,14 +423,19 @@ io.on('connection', (socket) => {
     socket.to(roomName).emit('gameState', { game, payload });
   });
 
+  // ── Minigame: host updates match settings ──
+  socket.on('gameSettings', ({ roomName, opts }) => {
+    socket.to(roomName).emit('gameSettings', { opts });
+  });
+
   // ── Minigame: host broadcasts invite popup to all players ──
   socket.on('gameInvite', ({ roomName, game, gameName, hostUsername }) => {
     socket.to(roomName).emit('gameInvite', { game, gameName, hostUsername });
   });
 
   // ── Minigame: host launches game to all players ──
-  socket.on('gameLaunch', ({ roomName, game, players }) => {
-    socket.to(roomName).emit('gameLaunch', { game, players });
+  socket.on('gameLaunch', ({ roomName, game, players, opts }) => {
+    socket.to(roomName).emit('gameLaunch', { game, players, opts });
   });
 
   // ── Minigame: player responds to invite (yes/no) ──

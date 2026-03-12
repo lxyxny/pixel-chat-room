@@ -826,7 +826,14 @@ document.addEventListener('DOMContentLoaded', () => {
     $g('gwait-title').textContent = gameName;
     // Show football options only for host on football
     const optPanel = $g('gwait-fb-options');
-    if (optPanel) optPanel.style.display = (type === 'football' && myRole === 'owner') ? '' : 'none';
+    if (optPanel) {
+      optPanel.style.display = (type === 'football') ? '' : 'none';
+      // Non-hosts see settings read-only
+      optPanel.querySelectorAll('.fb-opt-btn').forEach(b => {
+        b.style.pointerEvents = myRole === 'owner' ? '' : 'none';
+        b.style.opacity = myRole === 'owner' ? '' : '0.6';
+      });
+    }
     // Reset to defaults
     fbOpts.pitch = 'classic'; fbOpts.weather = 'clear'; fbOpts.time = 'day';
     ['fb-opt-pitch','fb-opt-weather','fb-opt-time'].forEach(id => {
@@ -841,15 +848,30 @@ document.addEventListener('DOMContentLoaded', () => {
     goShow('gscreen-wait');
   }
 
-  // Option button clicks
+  // Option button clicks — host only, broadcast change to all
   ['fb-opt-pitch','fb-opt-weather','fb-opt-time'].forEach(id => {
     $g(id)?.addEventListener('click', e => {
       const btn = e.target.closest('.fb-opt-btn'); if (!btn) return;
+      if (myRole !== 'owner') return;
       const key = id.replace('fb-opt-','');
       fbOpts[key] = btn.dataset.val;
       $g(id).querySelectorAll('.fb-opt-btn').forEach(b => b.classList.toggle('active', b === btn));
+      // Broadcast updated settings so all players see the change live
+      socket.emit('gameSettings', { roomName: currentRoom, opts: { ...fbOpts } });
     });
   });
+
+  // Apply incoming settings update (from host)
+  function applyFbOpts(opts) {
+    if (!opts) return;
+    ['pitch','weather','time'].forEach(key => {
+      if (opts[key]) {
+        fbOpts[key] = opts[key];
+        const id = 'fb-opt-' + key;
+        $g(id)?.querySelectorAll('.fb-opt-btn').forEach(b => b.classList.toggle('active', b.dataset.val === opts[key]));
+      }
+    });
+  }
 
   function renderWaitList() {
     const el = $g('gwait-players');
@@ -1013,6 +1035,15 @@ document.addEventListener('DOMContentLoaded', () => {
         activeGame.streaks[myUsername] = 0;
       }
       addSystemMessage('✅ You joined the ' + (GAME_NAMES[game]||game) + ' lobby!');
+      // Show wait screen with options panel (read-only for non-host)
+      const optPanel = $g('gwait-fb-options');
+      if (optPanel) {
+        optPanel.style.display = game === 'football' ? '' : 'none';
+        optPanel.querySelectorAll('.fb-opt-btn').forEach(b => { b.style.pointerEvents='none'; b.style.opacity='0.6'; });
+      }
+      if ($g('gwait-title')) $g('gwait-title').textContent = GAME_NAMES[game] || game;
+      renderWaitList();
+      goShow('gscreen-wait');
     }
   }
 
@@ -1385,6 +1416,30 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    // ── Weather particle update (in tick, not draw) ──
+    const wopt2 = fbState.opts || {};
+    const wp2 = fbState.weatherParticles;
+    if (wopt2.weather === 'rain' || wopt2.weather === 'storm') {
+      const spawnN = wopt2.weather === 'storm' ? 4 : 2;
+      const canvas2 = $g('fb-canvas');
+      const cw2 = canvas2 ? canvas2.width : 800, ch2 = canvas2 ? canvas2.height : 600;
+      for (let i = 0; i < spawnN; i++) {
+        if (wp2.length < 120) wp2.push({ x: Math.random()*cw2, y: -8, vx: wopt2.weather==='storm'?-1.5:-0.4, vy: 8+Math.random()*4 });
+      }
+      for (let i = wp2.length-1; i >= 0; i--) {
+        wp2[i].x += wp2[i].vx; wp2[i].y += wp2[i].vy;
+        if (wp2[i].y > ch2 + 10) wp2.splice(i, 1);
+      }
+    } else if (wopt2.weather === 'snow') {
+      const canvas2 = $g('fb-canvas');
+      const cw2 = canvas2 ? canvas2.width : 800, ch2 = canvas2 ? canvas2.height : 600;
+      if (wp2.length < 60) wp2.push({ x: Math.random()*cw2, y: -4, vx: (Math.random()-0.5)*0.6, vy: 1+Math.random(), r: 2+Math.random()*2 });
+      for (let i = wp2.length-1; i >= 0; i--) {
+        wp2[i].x += wp2[i].vx; wp2[i].y += wp2[i].vy;
+        if (wp2[i].y > ch2 + 8) wp2.splice(i, 1);
+      }
+    }
+
     if (fbState.goalFlash > 0) fbState.goalFlash -= dt;
   }
 
@@ -1709,55 +1764,36 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Weather particles ──
     const wp = fbState.weatherParticles;
     const wopt = fbState.opts || {};
+
+    // Draw rain
     if (wopt.weather === 'rain' || wopt.weather === 'storm') {
-      // Spawn new drops
-      const spawnN = wopt.weather === 'storm' ? 12 : 6;
-      for (let i = 0; i < spawnN; i++) {
-        wp.push({ x: Math.random()*cw, y: -8, vx: wopt.weather==='storm'?-1.5:-0.5, vy: 9+Math.random()*5, life: 1 });
-      }
-      ctx.strokeStyle = 'rgba(140,200,255,0.45)'; ctx.lineWidth = cs(0.7);
-      for (let i = wp.length-1; i >= 0; i--) {
+      ctx.strokeStyle = 'rgba(140,200,255,0.4)'; ctx.lineWidth = cs(0.8);
+      ctx.beginPath();
+      for (let i = 0; i < wp.length; i++) {
         const p = wp[i];
-        p.x += p.vx; p.y += p.vy;
-        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x+p.vx*2, p.y+p.vy*2); ctx.stroke();
-        if (p.y > ch + 10) wp.splice(i, 1);
+        ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + p.vx*2, p.y + p.vy*2);
       }
+      ctx.stroke();
     } else if (wopt.weather === 'snow') {
-      for (let i = 0; i < 3; i++) {
-        wp.push({ x: Math.random()*cw, y: -4, vx: (Math.random()-0.5)*0.8, vy: 1.2+Math.random()*1.2, r: cs(1.5+Math.random()*1.5) });
-      }
-      ctx.fillStyle = 'rgba(220,235,255,0.7)';
-      for (let i = wp.length-1; i >= 0; i--) {
+      ctx.fillStyle = 'rgba(220,235,255,0.75)';
+      for (let i = 0; i < wp.length; i++) {
         const p = wp[i];
-        p.x += p.vx + Math.sin(Date.now()*0.001+i)*0.3; p.y += p.vy;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
-        if (p.y > ch + 8) wp.splice(i, 1);
       }
     }
-    // Cap particle count
-    if (wp.length > 400) wp.splice(0, wp.length - 300);
 
-    // Wind indicator
+    // Wind indicator (small, top-right corner)
     if (wopt.weather === 'wind' || wopt.weather === 'storm') {
       const wa = fbState.windAngle;
-      const wlx = cw - cs(50), wly = cs(40);
-      ctx.save();
-      ctx.translate(wlx, wly);
-      ctx.strokeStyle = 'rgba(180,220,255,0.6)'; ctx.lineWidth = cs(1.5);
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(Math.cos(wa)*cs(20), Math.sin(wa)*cs(20));
-      ctx.stroke();
-      // Arrow head
-      const ax = Math.cos(wa)*cs(20), ay = Math.sin(wa)*cs(20);
-      ctx.fillStyle = 'rgba(180,220,255,0.6)';
-      ctx.beginPath();
-      ctx.moveTo(ax, ay);
-      ctx.lineTo(ax+Math.cos(wa+2.4)*cs(6), ay+Math.sin(wa+2.4)*cs(6));
-      ctx.lineTo(ax+Math.cos(wa-2.4)*cs(6), ay+Math.sin(wa-2.4)*cs(6));
+      ctx.save(); ctx.translate(cw - 44, 32);
+      ctx.strokeStyle = 'rgba(180,220,255,0.65)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(wa)*18, Math.sin(wa)*18); ctx.stroke();
+      const ax=Math.cos(wa)*18, ay=Math.sin(wa)*18;
+      ctx.fillStyle='rgba(180,220,255,0.65)';
+      ctx.beginPath(); ctx.moveTo(ax,ay);
+      ctx.lineTo(ax+Math.cos(wa+2.4)*6,ay+Math.sin(wa+2.4)*6);
+      ctx.lineTo(ax+Math.cos(wa-2.4)*6,ay+Math.sin(wa-2.4)*6);
       ctx.fill();
-      ctx.fillStyle='rgba(180,220,255,0.5)'; ctx.font=`${cs(7)}px 'Press Start 2P',monospace`;
-      ctx.textAlign='center'; ctx.fillText('💨', 0, cs(18));
       ctx.restore();
     }
 
@@ -1852,6 +1888,14 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ── Socket: host launched the game — all joined players start ───────────
+  // ── Socket: host updates match settings ─────────────────────────────────
+  socket.on('gameSettings', ({ opts }) => {
+    applyFbOpts(opts);
+    // Make sure panel is visible for football lobbies
+    const optPanel = $g('gwait-fb-options');
+    if (optPanel && activeGame?.type === 'football') optPanel.style.display = '';
+  });
+
   socket.on('gameLaunch', ({ game, players, opts }) => {
     if (!players.includes(myUsername)) return;
     if (!activeGame) {
@@ -1897,15 +1941,46 @@ document.addEventListener('DOMContentLoaded', () => {
     if (data.game === 'pixelduel' && pdState) {
       const p = pdState.players.find(p => p.name === data.payload.username && !p.isMe);
       if (p) { p.x=data.payload.x; p.y=data.payload.y; p.hp=data.payload.hp??p.hp; p.angle=data.payload.angle??p.angle; }
+      // Non-host receives authoritative bullet list from host
+      if (data.payload.bullets && myRole !== 'owner') {
+        pdState.bullets = data.payload.bullets;
+      }
     }
     if (data.game === 'pong' && pongState) {
       const pad = pongState.paddles.find(p => p.name === data.payload.username && !p.isMe);
-      if (pad) pad.pos = data.payload.pos;
+      if (pad) { pad.pos = data.payload.pos; if (data.payload.vel !== undefined) pad.vel = data.payload.vel; }
+      // Non-hosts reconcile ball with host snapshot
+      if (data.payload.ball && myRole !== 'owner') {
+        const b = pongState.ball, ab = data.payload.ball;
+        const d = Math.hypot(b.x-ab.x, b.y-ab.y);
+        const blend = d > 80 ? 1 : d > 25 ? 0.4 : 0.12;
+        b.x += (ab.x-b.x)*blend; b.y += (ab.y-b.y)*blend;
+        b.vx += (ab.vx-b.vx)*blend; b.vy += (ab.vy-b.vy)*blend;
+        if (ab.speed) b.speed = ab.speed;
+      }
     }
     if (data.game === 'snake' && snakeState) {
-      // Snake direction updates from remote players
-      const sIdx = snakeState.snakes.findIndex(s => s.playerName === data.payload.username && !s.isMe);
-      if (sIdx >= 0) snakeState.snakes[sIdx].nextDir = data.payload.dir;
+      if (data.payload.fullState && myRole !== 'owner') {
+        // Full state sync from host
+        const [sn1, sn2] = snakeState.snakes;
+        const s1 = data.payload.s1, s2 = data.payload.s2;
+        if (s1) { sn1.body=s1.body; sn1.dir=s1.dir; sn1.nextDir=s1.nextDir; sn1.score=s1.score; sn1.alive=s1.alive; }
+        if (s2) { sn2.body=s2.body; sn2.dir=s2.dir; sn2.nextDir=s2.nextDir; sn2.score=s2.score; sn2.alive=s2.alive; }
+        if (data.payload.apples) snakeState.apples = data.payload.apples;
+        const $s1 = $g('snake-p1-len'), $s2 = $g('snake-p2-len');
+        if ($s1) $s1.textContent = sn1.score;
+        if ($s2) $s2.textContent = sn2.score;
+      } else if (!data.payload.fullState) {
+        // Direction update from non-host player to host
+        const idx = data.payload.idx;
+        if (idx === 0 || idx === 1) {
+          const sn = snakeState.snakes[idx];
+          if (sn && data.payload.dir) {
+            const d = data.payload.dir;
+            if(d.x!==0&&sn.dir.x===0||d.y!==0&&sn.dir.y===0) sn.nextDir = d;
+          }
+        }
+      }
     }
   });
 
@@ -2648,13 +2723,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const bcInt=setInterval(()=>{
       if(!pdState||pdState.over){clearInterval(bcInt);return;}
       const me=pdState.players.find(p=>p.isMe);
-      if(me)socket.emit('gameState',{roomName:currentRoom,game:'pixelduel',payload:{username:me.name,x:me.x,y:me.y,hp:me.hp,angle:me.angle}});
+      if(!me) return;
+      const payload={username:me.name,x:me.x,y:me.y,hp:me.hp,angle:me.angle};
+      // Host broadcasts all bullets so non-host sees them
+      if(myRole==='owner') payload.bullets=pdState.bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,owner:b.owner,life:b.life}));
+      socket.emit('gameState',{roomName:currentRoom,game:'pixelduel',payload});
     },50);
 
     function pdLoop(){
       if(!pdState||pdState.over)return;
-      const cwr=canvas.getBoundingClientRect().width;
-      if(cwr>0&&Math.abs(canvas.width-cwr)>2)resizePD();
+      if(canvas.offsetWidth>10&&Math.abs(canvas.width-canvas.offsetWidth)>2)resizePD();
       pdTick();
       pdDraw(ctx,canvas);
       pdRAF=requestAnimationFrame(pdLoop);
@@ -2729,7 +2807,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if(p.reloadT>0)p.reloadT--;
     });
 
-    // Bullets
+    // Bullets — only host runs physics (non-host gets bullets via gameState sync)
+    if (myRole !== 'owner') {
+      // Non-host: just advance particle effects, skip hit detection
+      if(pdState.particles){
+        pdState.particles=pdState.particles.filter(pt=>{ pt.x+=pt.vx;pt.y+=pt.vy;pt.life--;pt.vx*=0.92;pt.vy*=0.92; return pt.life>0; });
+      }
+      return;
+    }
     pdState.bullets=pdState.bullets.filter(b=>{
       b.x+=b.vx; b.y+=b.vy; b.life--;
       if(b.life<=0||b.x<0||b.x>PD_VW||b.y<0||b.y>PD_VH)return false;
@@ -2964,19 +3049,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const onKU = e => { delete pongState.keys[e.key]; };
     window.addEventListener('keydown', onKD); window.addEventListener('keyup', onKU);
 
-    // Broadcast my paddle position
+    // Broadcast my paddle + host broadcasts ball
     const bcInt = setInterval(() => {
       if (!pongState || pongState.over) { clearInterval(bcInt); return; }
       const me = pongState.paddles.find(p => p.isMe);
-      if (me) socket.emit('gameState', { roomName: currentRoom, game: 'pong',
-        payload: { username: me.name, pos: me.pos } });
-    }, 50);
+      if (!me) return;
+      const payload = { username: me.name, pos: me.pos, vel: me.vel };
+      if (myRole === 'owner') {
+        payload.ball = { x: pongState.ball.x, y: pongState.ball.y, vx: pongState.ball.vx, vy: pongState.ball.vy, speed: pongState.ball.speed };
+      }
+      socket.emit('gameState', { roomName: currentRoom, game: 'pong', payload });
+    }, 33); // ~30hz for pong
 
     let lastT = 0;
     function pongLoop(now) {
       if (!pongState || pongState.over) return;
-      const cw2 = canvas.getBoundingClientRect().width;
-      if (cw2 > 0 && Math.abs(canvas.width - cw2) > 2) resize();
+      if (Math.abs(canvas.width - canvas.offsetWidth) > 2 && canvas.offsetWidth > 10) resize();
       const dt = Math.min((now - lastT) / 16.667, 3); lastT = now;
       pongTick(dt);
       pongDraw(ctx, canvas);
@@ -3175,20 +3263,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const onKD=e=>{snakeState.keys[e.key]=true;if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault();};
     const onKU=e=>{delete snakeState.keys[e.key];};
     window.addEventListener('keydown',onKD);window.addEventListener('keyup',onKU);
+    const chDir=(sn,d)=>{if(d.x!==0&&sn.dir.x===0||d.y!==0&&sn.dir.y===0)sn.nextDir=d;};
     const tickInt=setInterval(()=>{
       if(!snakeState||snakeState.over){clearInterval(tickInt);return;}
       const st=snakeState,k=st.keys,[sn1,sn2]=st.snakes;
-      const chDir=(sn,d)=>{if(d.x!==0&&sn.dir.x===0||d.y!==0&&sn.dir.y===0)sn.nextDir=d;};
+      // Read local input and broadcast direction to host
       if(st.s1IsMe){
         if(k['w']||k['W'])chDir(sn1,{x:0,y:-1});else if(k['s']||k['S'])chDir(sn1,{x:0,y:1});
         else if(k['a']||k['A'])chDir(sn1,{x:-1,y:0});else if(k['d']||k['D'])chDir(sn1,{x:1,y:0});
-        socket.emit('gameState',{roomName:currentRoom,game:'snake',payload:{username:myUsername,dir:sn1.nextDir}});
+        if(myRole!=='owner') socket.emit('gameState',{roomName:currentRoom,game:'snake',payload:{username:myUsername,idx:0,dir:sn1.nextDir}});
       }
       if(!cpuMode&&st.s2IsMe){
         if(k['ArrowUp'])chDir(sn2,{x:0,y:-1});else if(k['ArrowDown'])chDir(sn2,{x:0,y:1});
         else if(k['ArrowLeft'])chDir(sn2,{x:-1,y:0});else if(k['ArrowRight'])chDir(sn2,{x:1,y:0});
-        socket.emit('gameState',{roomName:currentRoom,game:'snake',payload:{username:myUsername,dir:sn2.nextDir}});
-      }else if(cpuMode){
+        if(myRole!=='owner') socket.emit('gameState',{roomName:currentRoom,game:'snake',payload:{username:myUsername,idx:1,dir:sn2.nextDir}});
+      }
+      // Non-host: skip physics, just wait for state from host
+      if(myRole!=='owner') return;
+      // CPU movement
+      if(cpuMode){
         const h=sn2.body[0],near=st.apples.length?st.apples.reduce((b,a)=>Math.abs(a.x-h.x)+Math.abs(a.y-h.y)<b.d?{a,d:Math.abs(a.x-h.x)+Math.abs(a.y-h.y)}:b,{a:st.apples[0],d:Infinity}).a:null;
         if(near){const dx=Math.sign(near.x-h.x),dy=Math.sign(near.y-h.y);if(dx&&sn2.dir.x!=-dx)chDir(sn2,{x:dx,y:0});else if(dy&&sn2.dir.y!=-dy)chDir(sn2,{x:0,y:dy});}
       }
@@ -3207,6 +3300,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if(sn1.alive&&sn2.body.slice(1).some(b=>b.x===h1.x&&b.y===h1.y))sn1.alive=false;
       if(sn2.alive&&sn1.body.slice(1).some(b=>b.x===h2.x&&b.y===h2.y))sn2.alive=false;
       $g('snake-p1-len').textContent=sn1.score;$g('snake-p2-len').textContent=sn2.score;
+      // Host broadcasts full state to all clients
+      socket.emit('gameState',{roomName:currentRoom,game:'snake',payload:{
+        fullState:true,
+        s1:{body:sn1.body,dir:sn1.dir,nextDir:sn1.nextDir,score:sn1.score,alive:sn1.alive},
+        s2:{body:sn2.body,dir:sn2.dir,nextDir:sn2.nextDir,score:sn2.score,alive:sn2.alive},
+        apples:st.apples
+      }});
       if(!sn1.alive||!sn2.alive){
         st.over=true;
         const w=sn1.score>sn2.score?p1n:sn2.score>sn1.score?p2n:'TIE';
@@ -3306,14 +3406,22 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ── Pixel-art scanline overlay (drawn over finished canvas frame) ──
+  // Cached scanline overlay canvas for performance
+  let _scanlineCache = null, _scanlineCacheW = 0, _scanlineCacheH = 0;
   function drawScanlines(ctx, w, h) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'multiply';
-    for (let y = 0; y < h; y += 4) {
-      ctx.fillStyle = 'rgba(0,0,0,0.18)';
-      ctx.fillRect(0, y, w, 2);
+    // Rebuild cache only when size changes
+    if (!_scanlineCache || _scanlineCacheW !== w || _scanlineCacheH !== h) {
+      _scanlineCache = document.createElement('canvas');
+      _scanlineCache.width = w; _scanlineCache.height = h;
+      const sc = _scanlineCache.getContext('2d');
+      for (let y = 0; y < h; y += 4) {
+        sc.fillStyle = 'rgba(0,0,0,0.14)';
+        sc.fillRect(0, y, w, 2);
+      }
+      _scanlineCacheW = w; _scanlineCacheH = h;
     }
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(_scanlineCache, 0, 0);
+    ctx.save();
     // Subtle vignette
     const vg = ctx.createRadialGradient(w/2,h/2,h*0.3,w/2,h/2,h*0.85);
     vg.addColorStop(0,'transparent');
