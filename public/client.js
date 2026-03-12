@@ -1290,12 +1290,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Move all players
     fbState.players.forEach(p => {
-      if (!p.isMe) { // remote players: apply weather friction to velocity for local smoothing
-        p.vx *= Math.pow(0.88 + playerFriction * 0.06, dt);
-        p.vy *= Math.pow(0.88 + playerFriction * 0.06, dt);
+      if (!p.isMe) {
+        if (p._tx !== undefined) {
+          // Predict forward using last-known velocity, then blend toward target
+          p.x += p._tvx * dt;
+          p.y += p._tvy * dt;
+          const ex = p._tx - p.x, ey = p._ty - p.y;
+          const dist = Math.hypot(ex, ey);
+          const alpha = dist > 60 ? 0.4 : dist > 15 ? 0.2 : 0.1;
+          p.x += ex * alpha;
+          p.y += ey * alpha;
+        }
+      } else {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
       }
-      p.x = Math.max(FB_PRAD, Math.min(FB_VW - FB_PRAD, p.x + p.vx * dt));
-      p.y = Math.max(FB_PRAD, Math.min(FB_VH - FB_PRAD, p.y + p.vy * dt));
+      p.x = Math.max(FB_PRAD, Math.min(FB_VW - FB_PRAD, p.x));
+      p.y = Math.max(FB_PRAD, Math.min(FB_VH - FB_PRAD, p.y));
       if (p.kickCooldown > 0) p.kickCooldown -= dt;
     });
 
@@ -1919,7 +1930,11 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('gameState', data => {
     if (data.game === 'football' && fbState) {
       const p = fbState.players.find(p => p.name === data.payload.username && !p.isMe);
-      if (p) { p.x = data.payload.x; p.y = data.payload.y; p.vx = data.payload.vx||0; p.vy = data.payload.vy||0; }
+      if (p) {
+        // Store received state as interpolation target
+        p._tx = data.payload.x; p._ty = data.payload.y;
+        p._tvx = data.payload.vx||0; p._tvy = data.payload.vy||0;
+      }
       // Non-hosts reconcile predicted ball with host authoritative snapshot
       if (data.payload.ball && myRole !== 'owner') {
         const b = fbState.ball, ab = data.payload.ball;
@@ -1940,7 +1955,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (data.game === 'pixelduel' && pdState) {
       const p = pdState.players.find(p => p.name === data.payload.username && !p.isMe);
-      if (p) { p.x=data.payload.x; p.y=data.payload.y; p.hp=data.payload.hp??p.hp; p.angle=data.payload.angle??p.angle; }
+      if (p) {
+        // Store as interpolation targets
+        p._tx = data.payload.x; p._ty = data.payload.y;
+        p.hp = data.payload.hp ?? p.hp;
+        if (data.payload.angle !== undefined) p._tangle = data.payload.angle;
+      }
       // Non-host receives authoritative bullet list from host
       if (data.payload.bullets && myRole !== 'owner') {
         pdState.bullets = data.payload.bullets;
@@ -1948,7 +1968,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (data.game === 'pong' && pongState) {
       const pad = pongState.paddles.find(p => p.name === data.payload.username && !p.isMe);
-      if (pad) { pad.pos = data.payload.pos; if (data.payload.vel !== undefined) pad.vel = data.payload.vel; }
+      if (pad) {
+        // Store as interpolation target, not instant snap
+        pad._tpos = data.payload.pos;
+        if (data.payload.vel !== undefined) pad._tvel = data.payload.vel;
+      }
       // Non-hosts reconcile ball with host snapshot
       if (data.payload.ball && myRole !== 'owner') {
         const b = pongState.ball, ab = data.payload.ball;
@@ -2807,6 +2831,24 @@ document.addEventListener('DOMContentLoaded', () => {
       if(p.reloadT>0)p.reloadT--;
     });
 
+    // Smoothly interpolate remote players toward their received positions
+    pdState.players.forEach(p => {
+      if (p.isMe) return;
+      if (p._tx !== undefined) {
+        const dx = p._tx - p.x, dy = p._ty - p.y;
+        const dist = Math.hypot(dx, dy);
+        const alpha = dist > 30 ? 0.35 : 0.2;
+        p.x += dx * alpha; p.y += dy * alpha;
+      }
+      if (p._tangle !== undefined) {
+        let da = p._tangle - p.angle;
+        while (da > Math.PI) da -= Math.PI*2;
+        while (da < -Math.PI) da += Math.PI*2;
+        p.angle += da * 0.3;
+      }
+      if (p.flashT > 0) p.flashT--;
+    });
+
     // Bullets — only host runs physics (non-host gets bullets via gameState sync)
     if (myRole !== 'owner') {
       // Non-host: just advance particle effects, skip hit detection
@@ -3086,23 +3128,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const SPEED = 6;
 
     // Move paddles
-    st.paddles.forEach(pad => {
+    for (const pad of st.paddles) {
       if (pad.isCpu) {
-        // CPU: track ball position on its wall
         const target = pad.side === 'left' || pad.side === 'right'
-          ? st.ball.y / PH
-          : st.ball.x / PW;
+          ? st.ball.y / PH : st.ball.x / PW;
         pad.vel += (target - pad.pos) * 0.08 * dt;
         pad.vel *= 0.75;
+        pad.pos = Math.max(PAD_LEN/2/PH, Math.min(1 - PAD_LEN/2/PH, pad.pos + pad.vel/PH * dt));
       } else if (pad.isMe) {
         const cfg = { left:{u:['w','W'],d:['s','S']}, right:{u:['ArrowUp'],d:['ArrowDown']}, top:{u:['q','Q'],d:['e','E']}, bottom:{u:['z','Z'],d:['x','X']} }[pad.side];
         const up   = cfg && cfg.u.some(k2 => k[k2]);
         const down = cfg && cfg.d.some(k2 => k[k2]);
         const tgt  = up ? -SPEED : down ? SPEED : 0;
         pad.vel += (tgt - pad.vel) * (1 - Math.pow(0.7, dt));
+        pad.pos = Math.max(PAD_LEN/2/PH, Math.min(1 - PAD_LEN/2/PH, pad.pos + pad.vel/PH * dt));
+      } else {
+        // Remote player: interpolate smoothly toward received target each frame
+        if (pad._tpos !== undefined) {
+          const diff = pad._tpos - pad.pos;
+          pad.pos += diff * Math.min(1, 0.25 * dt * 3);
+          pad.pos = Math.max(PAD_LEN/2/PH, Math.min(1 - PAD_LEN/2/PH, pad.pos));
+        }
       }
-      pad.pos = Math.max(PAD_LEN/2/PH, Math.min(1 - PAD_LEN/2/PH, pad.pos + pad.vel/PH * dt));
-    });
+    }
 
     // Ball movement
     const b = st.ball;
