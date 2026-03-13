@@ -810,7 +810,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Legacy modal close
   document.getElementById('close-minigame-btn')?.addEventListener('click', goHide);
 
-  const GAME_NAMES = { football:'⚽ Football', skribbl:'🎨 Skribbl', quiz:'📚 Quiz Battle', wordbomb:'💣 Word Bomb', pixelduel:'🔫 Pixel Duel', pong:'🏓 Pong', snake:'🐍 Snake Race', typing:'⌨️ Typing Sprint' };
+  const GAME_NAMES = { football:'⚽ Football', pixelduel:'🔫 Pixel Duel', pong:'🏓 Pong' };
 
   // ── Football match options state (host only) ─────────────
   const fbOpts = { pitch: 'classic', weather: 'clear', time: 'day' };
@@ -912,7 +912,7 @@ document.addEventListener('DOMContentLoaded', () => {
     _doLaunchGame(t);
   }
 
-  const GAME_ICONS = { football:'⚽', quiz:'📚', skribbl:'🎨', wordbomb:'💣', pixelduel:'🔫', pong:'🏓', snake:'🐍', typing:'⌨️' };
+  const GAME_ICONS = { football:'⚽', pixelduel:'🔫', pong:'🏓' };
   const GAME_HINTS = {
     football: 'WASD to move · SPACE to kick · Score goals!',
     quiz: '10 questions · 15 sec each · most points wins',
@@ -950,13 +950,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function _launchImmediate(t) {
     if (t === 'football')       launchFootball();
-    else if (t === 'quiz')      launchQuiz();
-    else if (t === 'skribbl')   launchSkribbl();
-    else if (t === 'wordbomb')  launchWordBomb();
     else if (t === 'pixelduel') launchPixelDuel();
     else if (t === 'pong')      launchPong();
-    else if (t === 'snake')     launchSnake();
-    else if (t === 'typing')    launchTyping();
   }
 
   function stopAllGames() {
@@ -1053,6 +1048,8 @@ document.addEventListener('DOMContentLoaded', () => {
   //  Inspired by HaxBall — real-time multiplayer via socket
   // ═══════════════════════════════════════════════════════════
   let fbRAF = null;
+  // Cached scanline overlay canvas for performance
+  let _scanlineCache = null, _scanlineCacheW = 0, _scanlineCacheH = 0;
 
   // Virtual field dimensions (logical coords, canvas scales to fit)
 // ─────────────────────────────────────────────────────────
@@ -1202,7 +1199,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 33);
 
     $g('fb-quit')?.addEventListener('click', () => {
-      clearInterval(timerInt); clearInterval(bcInt); clearInterval(ballBcInt);
+      clearInterval(timerInt); clearInterval(bcInt);
       cleanupFB(onKD, onKU);
     });
 
@@ -1319,67 +1316,43 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Ball physics — everyone predicts locally (host is authoritative) ──
     const b = fbState.ball;
 
-    if (myRole !== 'owner') {
-      // NON-HOST: do not simulate ball physics — just interpolate toward last received snapshot
-      if (b._tx !== undefined) {
-        // Predict forward with received velocity
-        b.x += b._tvx * dt;
-        b.y += b._tvy * dt;
-        // Then blend toward authoritative position
-        const ex = b._tx - b.x, ey = b._ty - b.y;
-        const dist = Math.hypot(ex, ey);
-        const alpha = dist > 80 ? 0.5 : dist > 20 ? 0.25 : 0.08;
-        b.x += ex * alpha;
-        b.y += ey * alpha;
-        // Decay predicted velocity toward received velocity
-        b._tvx += (b.vx - b._tvx) * 0.15;
-        b._tvy += (b.vy - b._tvy) * 0.15;
-      }
-      b.spinAngle = (b.spinAngle + b.spin * 0.06 * dt) % (Math.PI * 2);
-      b.spin *= Math.pow(0.88, dt);
-    } else {
-      // HOST: run full physics
-      let ballFriction = FB_FRICTION;
-      if (wo.weather === 'rain')  ballFriction = 0.990;
-      if (wo.weather === 'storm') ballFriction = 0.993;
-      if (wo.weather === 'snow')  ballFriction = 0.988;
-      if (wo.pitch === 'astro')   ballFriction = 0.978;
-      if (wo.pitch === 'sand')    ballFriction = 0.965;
-      if (wo.pitch === 'mud')     ballFriction = 0.955;
-      if (wo.pitch === 'snow')    ballFriction = 0.985;
-
-      let windX = 0, windY = 0;
-      if (wo.weather === 'wind' || wo.weather === 'storm') {
-        const windStr = wo.weather === 'storm' ? 0.10 : 0.06;
-        windX = Math.cos(fbState.windAngle) * windStr;
-        windY = Math.sin(fbState.windAngle) * windStr;
-      }
-
-      const steps = Math.max(1, Math.ceil(dt));
-      const dts   = dt / steps;
-      for (let s = 0; s < steps; s++) {
-        b.vx += windX * dts; b.vy += windY * dts;
-        b.x  += b.vx * dts; b.y  += b.vy * dts;
-        b.vx *= Math.pow(ballFriction, dts);
-        b.vy *= Math.pow(ballFriction, dts);
-      }
-      b.spin     *= Math.pow(0.88, dt);
-      b.spinAngle = (b.spinAngle + b.spin * 0.06 * dt) % (Math.PI * 2);
-      const bSpeedNow = Math.hypot(b.vx, b.vy);
-      if (bSpeedNow < 0.5) b.spin = 0;
+    // ── Ball physics: ALL clients run identical deterministic simulation ──
+    let ballFriction = FB_FRICTION;
+    if (wo.weather === 'rain')  ballFriction = 0.990;
+    if (wo.weather === 'storm') ballFriction = 0.993;
+    if (wo.weather === 'snow')  ballFriction = 0.988;
+    if (wo.pitch === 'astro')   ballFriction = 0.978;
+    if (wo.pitch === 'sand')    ballFriction = 0.965;
+    if (wo.pitch === 'mud')     ballFriction = 0.955;
+    if (wo.pitch === 'snow')    ballFriction = 0.985;
+    let windX = 0, windY = 0;
+    if (wo.weather === 'wind' || wo.weather === 'storm') {
+      const windStr = wo.weather === 'storm' ? 0.10 : 0.06;
+      windX = Math.cos(fbState.windAngle) * windStr;
+      windY = Math.sin(fbState.windAngle) * windStr;
     }
+    const steps = Math.max(1, Math.ceil(dt));
+    const dts   = dt / steps;
+    for (let s = 0; s < steps; s++) {
+      b.vx += windX * dts; b.vy += windY * dts;
+      b.x  += b.vx * dts; b.y  += b.vy * dts;
+      b.vx *= Math.pow(ballFriction, dts);
+      b.vy *= Math.pow(ballFriction, dts);
+    }
+    b.spin     *= Math.pow(0.88, dt);
+    b.spinAngle = (b.spinAngle + b.spin * 0.06 * dt) % (Math.PI * 2);
+    if (Math.hypot(b.vx, b.vy) < 0.5) b.spin = 0;
 
-    // ── Wall / goal collisions — host only ──
-    if (myRole !== 'owner') {
-      // Non-host skips all collision — host handles it and broadcasts result
-    } else {
+    // ── Wall / goal collisions — all clients run identical simulation ──
+    {
     const gTop = (FB_VH - FB_GOAL_H) / 2;
     const gBot = gTop + FB_GOAL_H;
     const bMinX = FB_BRAD, bMaxX = FB_VW - FB_BRAD;
     const bMinY = FB_BRAD, bMaxY = FB_VH - FB_BRAD;
 
-    if (b.y < bMinY) { b.y = bMinY; b.vy = Math.abs(b.vy) * FB_WALL_DAMP; b.spin *= -0.45; }
-    if (b.y > bMaxY) { b.y = bMaxY; b.vy = -Math.abs(b.vy) * FB_WALL_DAMP; b.spin *= -0.45; }
+    let _wallHit = false;
+    if (b.y < bMinY) { b.y = bMinY; b.vy = Math.abs(b.vy) * FB_WALL_DAMP; b.spin *= -0.45; _wallHit=true; }
+    if (b.y > bMaxY) { b.y = bMaxY; b.vy = -Math.abs(b.vy) * FB_WALL_DAMP; b.spin *= -0.45; _wallHit=true; }
 
     if (b.x < bMinX) {
       if (b.y >= gTop && b.y <= gBot) {
@@ -1391,7 +1364,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (b.y >= gTop && b.y <= gBot) {
         if (b.x > FB_VW + FB_GOAL_D) { fbScoreGoal(0); return; }
         if (b.x > bMaxX + FB_GOAL_D - 2) { b.vx = -Math.abs(b.vx) * 0.5; b.vy *= 0.6; }
-      } else { b.x = bMaxX; b.vx = -Math.abs(b.vx) * FB_WALL_DAMP; }
+      } else { b.x = bMaxX; b.vx = -Math.abs(b.vx) * FB_WALL_DAMP; _wallHit=true; }
+    }
+    if (_wallHit && myRole === 'owner') {
+      socket.emit('gameState', { roomName: currentRoom, game: 'football',
+        payload: { ballSync: true, x: b.x, y: b.y, vx: b.vx, vy: b.vy } });
     }
 
     const postBounce = (px, py) => {
@@ -1409,6 +1386,7 @@ document.addEventListener('DOMContentLoaded', () => {
     postBounce(FB_VW, gTop); postBounce(FB_VW, gBot);
 
     // ── Player–ball collision ──
+    let _ballHit = false;
     fbState.players.forEach(p => {
       const dx = b.x - p.x, dy = b.y - p.y;
       const dist = Math.hypot(dx, dy);
@@ -1420,15 +1398,20 @@ document.addEventListener('DOMContentLoaded', () => {
           const e = 0.82;
           const j = -(1+e) * relVn / (1 + 0.4);
           b.vx += j * nx; b.vy += j * ny;
-          // No spin added from body contact (prevents spiral dribbling)
           const bSpd = Math.hypot(b.vx, b.vy);
           const minPush = FB_KICK_BASE * 0.7;
           if (bSpd < minPush) { const boost = minPush / Math.max(0.1, bSpd); b.vx *= boost; b.vy *= boost; }
+          _ballHit = true;
         }
         const overlap = minD - dist + 0.5;
         b.x += nx * overlap; b.y += ny * overlap;
       }
     });
+    // Host broadcasts exact ball state the instant a player touches it
+    if (_ballHit && myRole === 'owner') {
+      socket.emit('gameState', { roomName: currentRoom, game: 'football',
+        payload: { ballSync: true, x: b.x, y: b.y, vx: b.vx, vy: b.vy } });
+    }
 
     // ── Player–player separation ──
     for (let i = 0; i < fbState.players.length; i++) {
@@ -1451,7 +1434,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    } // end host-only collision block
+    }
 
     // ── Weather particle update (in tick, not draw) ──
     const wopt2 = fbState.opts || {};
@@ -1956,26 +1939,21 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('gameState', data => {
     if (data.game === 'football' && fbState) {
       const pl = data.payload;
-      if (pl.ballUpdate) {
-        // Dedicated ball snapshot from host — store as interpolation target
-        if (myRole !== 'owner') {
-          const b = fbState.ball;
-          b._tx = pl.x; b._ty = pl.y;
-          b._tvx = pl.vx; b._tvy = pl.vy;
-          // Also update actual vx/vy so prediction uses latest velocity
-          b.vx = pl.vx; b.vy = pl.vy;
-        }
-      } else {
+      if (pl.ballSync && myRole !== 'owner') {
+        // Hard snap ball to authoritative state from host — no lerp, instant correction
+        fbState.ball.x = pl.x; fbState.ball.y = pl.y;
+        fbState.ball.vx = pl.vx; fbState.ball.vy = pl.vy;
+      } else if (!pl.ballSync) {
         // Player position update
         const p = fbState.players.find(p => p.name === pl.username && !p.isMe);
-        if (p) {
-          p._tx = pl.x; p._ty = pl.y;
-          p._tvx = pl.vx||0; p._tvy = pl.vy||0;
-        }
-        // Apply kick from non-host (host integrates it directly)
+        if (p) { p._tx = pl.x; p._ty = pl.y; p._tvx = pl.vx||0; p._tvy = pl.vy||0; }
+        // Kick intent from non-host → host applies + immediately broadcasts result
         if (pl.kick && myRole === 'owner') {
-          fbState.ball.vx = pl.kick.vx; fbState.ball.vy = pl.kick.vy;
-          fbState.ball.x  = pl.kick.bx; fbState.ball.y  = pl.kick.by;
+          const b = fbState.ball;
+          b.vx = pl.kick.vx; b.vy = pl.kick.vy;
+          b.x  = pl.kick.bx; b.y  = pl.kick.by;
+          socket.emit('gameState', { roomName: currentRoom, game: 'football',
+            payload: { ballSync: true, x: b.x, y: b.y, vx: b.vx, vy: b.vy } });
         }
       }
     }
@@ -2037,697 +2015,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ab.speed) b.speed = ab.speed;
       }
     }
-    if (data.game === 'snake' && snakeState) {
-      if (data.payload.fullState && myRole !== 'owner') {
-        // Full state sync from host
-        const [sn1, sn2] = snakeState.snakes;
-        const s1 = data.payload.s1, s2 = data.payload.s2;
-        if (s1) { sn1.body=s1.body; sn1.dir=s1.dir; sn1.nextDir=s1.nextDir; sn1.score=s1.score; sn1.alive=s1.alive; }
-        if (s2) { sn2.body=s2.body; sn2.dir=s2.dir; sn2.nextDir=s2.nextDir; sn2.score=s2.score; sn2.alive=s2.alive; }
-        if (data.payload.apples) snakeState.apples = data.payload.apples;
-        const $s1 = $g('snake-p1-len'), $s2 = $g('snake-p2-len');
-        if ($s1) $s1.textContent = sn1.score;
-        if ($s2) $s2.textContent = sn2.score;
-      } else if (!data.payload.fullState) {
-        // Direction update from non-host player to host
-        const idx = data.payload.idx;
-        if (idx === 0 || idx === 1) {
-          const sn = snakeState.snakes[idx];
-          if (sn && data.payload.dir) {
-            const d = data.payload.dir;
-            if(d.x!==0&&sn.dir.x===0||d.y!==0&&sn.dir.y===0) sn.nextDir = d;
-          }
-        }
-      }
-    }
+
   });
-
-
-  // ═══════════════════════════════════════════════════════════
-  //  🎨  SKRIBBL  (full canvas draw + guess UI)
-  // ═══════════════════════════════════════════════════════════
-  const SK_COLORS = [
-    '#000000','#3d3d3d','#7a7a7a','#c8c8c8','#ffffff',
-    '#e94560','#ff6b35','#ffb700','#ffe066','#7bed9f',
-    '#4cc9f0','#0077ff','#6c5ce7','#fd79a8','#a29bfe',
-    '#00b894','#55efc4','#6d4c41','#ff9ff3','#ffeaa7',
-  ];
-  const SK_WORDS_BY_CAT = {
-    '🐾 Animals':  ['cat','dog','shark','elephant','penguin','dragon','spider','jellyfish','giraffe','octopus','parrot','rhino','scorpion','platypus','narwhal'],
-    '🏠 Objects':  ['guitar','telescope','umbrella','scissors','lighthouse','hourglass','compass','lantern','anchor','trophy','backpack','microscope','parachute','magnifying glass'],
-    '🌍 Places':   ['volcano','castle','pyramid','igloo','treehouse','submarine','spaceship','windmill','skyscraper','cave','colosseum','great wall','eiffel tower'],
-    '🍕 Food':     ['pizza','sushi','burger','taco','waffle','spaghetti','dumpling','pretzel','cupcake','hotdog','baguette','churro','fondue','pineapple'],
-    '🏃 Actions':  ['dancing','surfing','climbing','juggling','swimming','flying','boxing','fishing','painting','skateboarding','diving','sneezing','yawning'],
-    '⚡ Tech':     ['robot','keyboard','satellite','microchip','drone','virtual reality','laser','radar','calculator','3D printer','smartwatch'],
-  };
-
-  let skTool='pen', skColor='#000000', skSize=6, skIsDrawing=false;
-  let skTimer=null, skBarInt=null, skTimeLeft=60, skCtx=null, skCanvas=null;
-
-  function launchSkribbl() {
-    goShow('gscreen-skribbl');
-    activeGame.drawers = [...activeGame.players].sort(() => Math.random()-0.5);
-    activeGame.drawerIdx = 0;
-    activeGame.round = 0;
-    activeGame.guessedThisRound = new Set();
-    activeGame.players.forEach(p => { activeGame.scores[p]=0; });
-
-    skCanvas = $g('sk-canvas');
-    skCtx    = skCanvas?.getContext('2d');
-    if (!skCanvas || !skCtx) return;
-
-    buildSkPalette();
-    setupSkToolbar();
-    setupSkCanvas();
-    setupSkGuessInput();
-    renderSkScores();
-
-    if (activeGame.players.length >= 2) {
-      skNextRound();
-    } else {
-      // Solo practice
-      addSystemMessage('⚠️ Solo mode — others will get an invite popup when you start!');
-      skNextRound();
-    }
-  }
-
-  function buildSkPalette() {
-    const pal = $g('sk-palette');
-    if (!pal) return;
-    pal.innerHTML = '';
-    SK_COLORS.forEach(c => {
-      const sw = document.createElement('div');
-      sw.className = 'sk-swatch' + (c === skColor ? ' active' : '');
-      sw.style.background = c;
-      sw.addEventListener('click', () => {
-        skColor = c; skTool = 'pen';
-        pal.querySelectorAll('.sk-swatch').forEach(s => s.classList.remove('active'));
-        sw.classList.add('active');
-        setSkTool('pen');
-      });
-      pal.appendChild(sw);
-    });
-  }
-
-  function setSkTool(t) {
-    skTool = t;
-    document.querySelectorAll('.sk-tool-btn').forEach(b => b.classList.remove('active'));
-    $g('sk-tool-' + t)?.classList.add('active');
-  }
-
-  function setupSkToolbar() {
-    $g('sk-tool-pen')?.addEventListener('click',    () => setSkTool('pen'));
-    $g('sk-tool-eraser')?.addEventListener('click', () => setSkTool('eraser'));
-    $g('sk-tool-fill')?.addEventListener('click',   () => setSkTool('fill'));
-    $g('sk-size-range')?.addEventListener('input', e => { skSize = parseInt(e.target.value); });
-    $g('sk-clear-btn')?.addEventListener('click', () => {
-      if (skCtx && skCanvas) {
-        skCtx.fillStyle = '#ffffff';
-        skCtx.fillRect(0, 0, skCanvas.width, skCanvas.height);
-      }
-    });
-  }
-
-  function setupSkCanvas() {
-    if (!skCanvas || !skCtx) return;
-    const wrap = skCanvas.parentElement;
-    function resizeSk() {
-      const w = wrap.clientWidth, h = wrap.clientHeight;
-      // preserve drawing
-      const tmp = document.createElement('canvas');
-      tmp.width = skCanvas.width; tmp.height = skCanvas.height;
-      tmp.getContext('2d').drawImage(skCanvas, 0, 0);
-      skCanvas.width = w; skCanvas.height = h;
-      skCtx.fillStyle = '#fff'; skCtx.fillRect(0,0,w,h);
-      skCtx.drawImage(tmp, 0, 0, w, h);
-    }
-    resizeSk();
-    window.addEventListener('resize', resizeSk);
-    skCtx.fillStyle = '#fff'; skCtx.fillRect(0,0,skCanvas.width,skCanvas.height);
-
-    let lx=0, ly=0;
-    const isDrawer = () => activeGame?.drawerName === myUsername;
-    const getPos = e => {
-      const r = skCanvas.getBoundingClientRect();
-      const src = e.touches ? e.touches[0] : e;
-      return { x:(src.clientX-r.left)*(skCanvas.width/r.width), y:(src.clientY-r.top)*(skCanvas.height/r.height) };
-    };
-    const startDraw = e => {
-      if (!isDrawer()) return;
-      skIsDrawing = true;
-      const p = getPos(e);
-      if (skTool === 'fill') {
-        skFloodFill(Math.round(p.x), Math.round(p.y), skColor);
-        skIsDrawing = false; return;
-      }
-      lx = p.x; ly = p.y;
-      skCtx.beginPath(); skCtx.moveTo(lx,ly);
-    };
-    const doDraw = e => {
-      if (!skIsDrawing || !isDrawer()) return;
-      e.preventDefault();
-      const p = getPos(e);
-      skCtx.globalCompositeOperation = skTool==='eraser' ? 'destination-out' : 'source-over';
-      skCtx.strokeStyle = skTool==='eraser' ? 'rgba(0,0,0,1)' : skColor;
-      skCtx.lineWidth   = skTool==='eraser' ? skSize*3 : skSize;
-      skCtx.lineCap = 'round'; skCtx.lineJoin = 'round';
-      skCtx.lineTo(p.x,p.y); skCtx.stroke();
-      skCtx.beginPath(); skCtx.moveTo(p.x,p.y);
-      lx=p.x; ly=p.y;
-      skCtx.globalCompositeOperation = 'source-over';
-    };
-    const stopDraw = () => { skIsDrawing=false; };
-    skCanvas.addEventListener('mousedown',  startDraw);
-    skCanvas.addEventListener('mousemove',  doDraw);
-    skCanvas.addEventListener('mouseup',    stopDraw);
-    skCanvas.addEventListener('mouseleave', stopDraw);
-    skCanvas.addEventListener('touchstart', e=>{e.preventDefault();startDraw(e);},{passive:false});
-    skCanvas.addEventListener('touchmove',  e=>{e.preventDefault();doDraw(e);},{passive:false});
-    skCanvas.addEventListener('touchend',   stopDraw);
-  }
-
-  function skFloodFill(sx, sy, fillColor) {
-    const w = skCanvas.width, h = skCanvas.height;
-    const img = skCtx.getImageData(0,0,w,h), d = img.data;
-    const fi = (x,y)=>(y*w+x)*4;
-    const tr=d[fi(sx,sy)],tg=d[fi(sx,sy)+1],tb=d[fi(sx,sy)+2];
-    const fc = parseInt(fillColor.replace('#',''),16);
-    const fr=(fc>>16)&255,fg=(fc>>8)&255,fb2=fc&255;
-    if(tr===fr&&tg===fg&&tb===fb2)return;
-    const stack=[[sx,sy]];
-    const seen=new Uint8Array(w*h);
-    const match=(x,y)=>{
-      const i=fi(x,y);
-      return Math.abs(d[i]-tr)<40&&Math.abs(d[i+1]-tg)<40&&Math.abs(d[i+2]-tb)<40;
-    };
-    while(stack.length){
-      const [x,y]=stack.pop();
-      if(x<0||x>=w||y<0||y>=h||seen[y*w+x]||!match(x,y))continue;
-      seen[y*w+x]=1;
-      const i=fi(x,y); d[i]=fr;d[i+1]=fg;d[i+2]=fb2;d[i+3]=255;
-      stack.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);
-    }
-    skCtx.putImageData(img,0,0);
-  }
-
-  function setupSkGuessInput() {
-    const input = $g('sk-guess-input'), btn = $g('sk-guess-btn');
-    if (!input || !btn) return;
-    const submit = () => {
-      const val = input.value.trim();
-      if (!val) return;
-      input.value = '';
-      addSkGuessLine(myUsername, val, 'normal');
-      socket.emit('chatMessage',{roomName:currentRoom,username:myUsername,message:val,avatar:myAvatar});
-      handleSkribblIncoming(myUsername, val);
-    };
-    btn.onclick = submit;
-    input.addEventListener('keypress', e => { if(e.key==='Enter') submit(); });
-  }
-
-  function skNextRound() {
-    if (!activeGame) return;
-    clearTimeout(skTimer); clearInterval(skBarInt);
-    if (activeGame.drawerIdx >= activeGame.drawers.length) { endSkribbl(); return; }
-
-    // Clear canvas
-    if (skCtx && skCanvas) {
-      skCtx.fillStyle='#fff'; skCtx.fillRect(0,0,skCanvas.width,skCanvas.height);
-    }
-
-    activeGame.drawerName = activeGame.drawers[activeGame.drawerIdx];
-    activeGame.round++;
-    activeGame.guessedThisRound = new Set();
-    activeGame.state = 'drawing';
-
-    // Pick word
-    const cats = Object.keys(SK_WORDS_BY_CAT);
-    const cat  = cats[Math.floor(Math.random()*cats.length)];
-    activeGame.currentWord = SK_WORDS_BY_CAT[cat][Math.floor(Math.random()*SK_WORDS_BY_CAT[cat].length)];
-    activeGame.roundStart  = Date.now();
-
-    const isMe = activeGame.drawerName === myUsername;
-    $g('sk-round-info').textContent = 'Round ' + activeGame.round + '/' + activeGame.drawers.length;
-    $g('sk-drawer-label').textContent = (isMe ? '✏️ You are drawing!' : '👀 ' + activeGame.drawerName + ' is drawing!');
-
-    const toolbar = $g('sk-toolbar');
-    const guessArea = $g('sk-guess-area');
-    if (toolbar)   toolbar.style.display  = isMe ? 'flex' : 'none';
-    if (guessArea) guessArea.style.display = isMe ? 'none' : 'flex';
-    const guessInput = $g('sk-guess-input');
-    if (guessInput) { guessInput.disabled = isMe; guessInput.placeholder = isMe ? 'You are drawing!' : 'Type your guess…'; }
-
-    renderSkWordDisplay(activeGame.currentWord, isMe);
-
-    if (isMe) {
-      addSkGuessLine('🎮', 'Your word: ' + activeGame.currentWord.toUpperCase() + ' | Category: ' + cat, 'system');
-    } else {
-      addSkGuessLine('🎮', activeGame.drawerName + ' is drawing! Guess in the box below.', 'system');
-    }
-    renderSkScores();
-
-    // Timer
-    skTimeLeft = 60;
-    $g('sk-time-left').textContent = '60';
-    const bar = $g('sk-bar');
-    if (bar) { bar.style.transition='none'; bar.style.width='100%'; bar.style.background='#4cc9f0'; }
-    setTimeout(()=>{ if(bar){bar.style.transition='width 60s linear';bar.style.width='0%';} },80);
-
-    clearInterval(skBarInt);
-    skBarInt = setInterval(()=>{
-      skTimeLeft--;
-      $g('sk-time-left').textContent = skTimeLeft;
-      if (bar) {
-        if(skTimeLeft<=10) bar.style.background='#e94560';
-        else if(skTimeLeft<=20) bar.style.background='#ffb700';
-      }
-      if(skTimeLeft<=0){ clearInterval(skBarInt); skTimeUp(); }
-    },1000);
-    clearTimeout(skTimer);
-    skTimer = setTimeout(skTimeUp, 62000);
-  }
-
-  function renderSkWordDisplay(word, reveal) {
-    const row = $g('sk-word-display');
-    if (!row) return;
-    row.innerHTML = '';
-    word.split('').forEach(ch => {
-      const el = document.createElement('div');
-      if (ch === ' ') {
-        el.className = 'sk-blank space'; el.textContent = ' ';
-      } else {
-        el.className = 'sk-blank';
-        el.textContent = reveal ? ch.toUpperCase() : '';
-      }
-      row.appendChild(el);
-    });
-  }
-
-  function revealSkWord() {
-    const row = $g('sk-word-display');
-    if (!row || !activeGame?.currentWord) return;
-    const blanks = row.querySelectorAll('.sk-blank:not(.space)');
-    activeGame.currentWord.replace(/ /g,'').split('').forEach((ch,i)=>{
-      if(blanks[i]) blanks[i].textContent=ch.toUpperCase();
-    });
-  }
-
-  function addSkGuessLine(user, text, type) {
-    const el = $g('sk-guess-log');
-    if (!el) return;
-    const d = document.createElement('div');
-    d.className = 'sk-guess-line ' + type;
-    d.innerHTML = `<span class="sk-guess-user">${escapeHtml(user)}</span> ${escapeHtml(text)}`;
-    el.appendChild(d);
-    el.scrollTop = el.scrollHeight;
-  }
-
-  function renderSkScores() {
-    const el = $g('sk-scores');
-    if (!el || !activeGame) return;
-    el.innerHTML = '<div class="sk-scores-title">🏆 Scores</div>';
-    const medals = ['🥇','🥈','🥉'];
-    Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]).forEach(([p,s],i)=>{
-      const row = document.createElement('div');
-      row.className = 'sk-score-row' + (p===myUsername?' me':'');
-      row.innerHTML = `<span>${medals[i]||''} ${escapeHtml(p)}</span><span class="sk-score-pts">${s}</span>`;
-      el.appendChild(row);
-    });
-  }
-
-  function handleSkribblIncoming(username, msg) {
-    if (!activeGame||activeGame.state!=='drawing'||username===activeGame.drawerName) return;
-    if (activeGame.guessedThisRound?.has(username)) return;
-    const guess = msg.toLowerCase().trim();
-    const word  = activeGame.currentWord.toLowerCase();
-    const exact = guess === word;
-    const close = !exact && word.length>=4 && levenshtein(guess,word)===1;
-    if (exact) {
-      activeGame.guessedThisRound.add(username);
-      const elapsed = Math.floor((Date.now()-activeGame.roundStart)/1000);
-      const pts = Math.max(1, Math.floor((60-elapsed)/10)+2);
-      activeGame.scores[username]=(activeGame.scores[username]||0)+pts;
-      activeGame.scores[activeGame.drawerName]=(activeGame.scores[activeGame.drawerName]||0)+1;
-      addSkGuessLine(username,'✅ GUESSED IT! (+'+pts+' pts)','correct');
-      revealSkWord();
-      renderSkScores();
-      const guessers = activeGame.players.filter(p=>p!==activeGame.drawerName);
-      if(guessers.every(p=>activeGame.guessedThisRound.has(p))){
-        addSkGuessLine('🎮','Everyone guessed! Next round…','system');
-        activeGame.drawerIdx++;
-        clearTimeout(skTimer);clearInterval(skBarInt);
-        setTimeout(skNextRound,2200);
-      }
-    } else if (close) {
-      addSkGuessLine(username, '"'+msg+'" — so close! 🔥','close');
-    } else {
-      addSkGuessLine(username, msg, 'normal');
-    }
-  }
-
-  function skTimeUp() {
-    clearTimeout(skTimer); clearInterval(skBarInt);
-    if(!activeGame||activeGame.state!=='drawing') return;
-    addSkGuessLine('⏰','Time\'s up! Word was: '+activeGame.currentWord.toUpperCase(),'system');
-    revealSkWord();
-    renderSkScores();
-    activeGame.drawerIdx++;
-    setTimeout(skNextRound, 2500);
-  }
-
-  function endSkribbl() {
-    clearTimeout(skTimer); clearInterval(skBarInt);
-    if(!activeGame)return;
-    const sorted=Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]);
-    addSystemMessage('🎨 Skribbl over! Winner: '+(sorted[0]?.[0]||'?')+' with '+(sorted[0]?.[1]||0)+' pts!');
-    renderSkScores();
-    activeGame=null;
-    setTimeout(goHide,5000);
-  }
-
-  $g('sk-quit')?.addEventListener('click',()=>{ stopAllGames(); goHide(); });
-
-
-  // ═══════════════════════════════════════════════════════════
-  //  📚  QUIZ BATTLE  (fullscreen with visible answer input)
-  // ═══════════════════════════════════════════════════════════
-  const QZ_BANK = [
-    {q:'What is 7 × 8?',                          a:['56'],              cat:'🔢 Maths',     mc:['42','54','56','64']},
-    {q:'What is √144?',                            a:['12'],              cat:'🔢 Maths',     mc:['11','12','13','14']},
-    {q:'How many sides does a hexagon have?',      a:['6'],               cat:'🔢 Maths',     mc:['5','6','7','8']},
-    {q:'What is 15% of 200?',                      a:['30'],              cat:'🔢 Maths',     mc:['20','25','30','35']},
-    {q:'What is 2 to the power of 10?',            a:['1024'],            cat:'🔢 Maths',     mc:['512','1000','1024','2048']},
-    {q:'Capital of France?',                       a:['paris'],           cat:'🌍 Geography', mc:['Lyon','Nice','Paris','Bordeaux']},
-    {q:'Capital of Japan?',                        a:['tokyo'],           cat:'🌍 Geography', mc:['Osaka','Kyoto','Nagoya','Tokyo']},
-    {q:'Capital of Australia?',                    a:['canberra'],        cat:'🌍 Geography', mc:['Sydney','Melbourne','Brisbane','Canberra']},
-    {q:'Longest river in the world?',              a:['nile'],            cat:'🌍 Geography', mc:['Amazon','Nile','Yangtze','Mississippi']},
-    {q:'How many continents?',                     a:['7'],               cat:'🌍 Geography', mc:['5','6','7','8']},
-    {q:'What gas do plants absorb?',               a:['co2','carbon dioxide'], cat:'🔬 Science', mc:['O₂','N₂','CO₂','H₂']},
-    {q:'The powerhouse of the cell?',              a:['mitochondria'],    cat:'🔬 Science',   mc:['Nucleus','Ribosome','Mitochondria','Golgi']},
-    {q:'H₂O is the chemical formula for?',         a:['water'],           cat:'🔬 Science',   mc:['Hydrogen','Water','Salt','Oxygen']},
-    {q:'Speed of sound in air (m/s approx)?',      a:['343'],             cat:'🔬 Science',   mc:['220','343','450','670']},
-    {q:'Bones in the human body?',                 a:['206'],             cat:'🔬 Science',   mc:['196','206','216','226']},
-    {q:'Chemical symbol for Gold?',                a:['au'],              cat:'🔬 Science',   mc:['Go','Gd','Au','Gl']},
-    {q:'What year did WW2 end?',                   a:['1945'],            cat:'📜 History',   mc:['1943','1944','1945','1946']},
-    {q:'Who invented the telephone?',              a:['bell','alexander graham bell'], cat:'📜 History', mc:['Edison','Bell','Tesla','Marconi']},
-    {q:'Titanic sank in what year?',               a:['1912'],            cat:'📜 History',   mc:['1908','1910','1912','1914']},
-    {q:'Who wrote Romeo and Juliet?',              a:['shakespeare'],     cat:'📖 Literature',mc:['Dickens','Shakespeare','Austen','Milton']},
-    {q:'Strings on a standard guitar?',            a:['6'],               cat:'🎵 Music',     mc:['4','5','6','7']},
-    {q:'Keys on a standard piano?',                a:['88'],              cat:'🎵 Music',     mc:['76','82','88','92']},
-    {q:'What sport uses a shuttlecock?',           a:['badminton'],       cat:'⚽ Sport',     mc:['Tennis','Squash','Badminton','Pickleball']},
-    {q:'Players in a rugby union team?',           a:['15'],              cat:'⚽ Sport',     mc:['11','13','15','16']},
-    {q:'Largest planet in our solar system?',      a:['jupiter'],         cat:'🔭 Space',     mc:['Saturn','Jupiter','Neptune','Uranus']},
-    {q:'Planet closest to the Sun?',               a:['mercury'],         cat:'🔭 Space',     mc:['Venus','Mercury','Earth','Mars']},
-    {q:'How many moons does Mars have?',           a:['2'],               cat:'🔭 Space',     mc:['0','1','2','4']},
-  ];
-
-  let qzTimer=null, qzBarInt=null, qzTimeLeft=15, qzMyAnswered=false;
-  const QZ_TIME=15;
-
-  function launchQuiz() {
-    goShow('gscreen-quiz');
-    activeGame.state   = 'quiz-idle';
-    activeGame.qBank   = [...QZ_BANK].sort(()=>Math.random()-.5).slice(0,10);
-    activeGame.qIdx    = 0;
-    activeGame.players.forEach(p=>{activeGame.scores[p]=0;activeGame.streaks[p]=0;});
-    setupQzInput();
-    renderQzScores();
-    $g('qz-question-text').textContent='Get ready…';
-    $g('qz-options').innerHTML='';
-    $g('qz-feedback').textContent='';
-    $g('qz-feedback').className='qz-feedback';
-    setTimeout(qzNextQuestion, 1200);
-  }
-
-  function setupQzInput() {
-    const input=$g('qz-text-input'), btn=$g('qz-submit-btn');
-    if(!input||!btn)return;
-    input.value=''; input.disabled=false; input.focus();
-    const submit=()=>{
-      const val=input.value.trim();
-      if(!val||qzMyAnswered||activeGame?.state!=='question')return;
-      input.value='';
-      handleQuizIncoming(myUsername,val);
-    };
-    btn.onclick=submit;
-    input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();submit();}};
-  }
-
-  function qzNextQuestion() {
-    if(!activeGame||activeGame.qIdx>=activeGame.qBank.length){endQuiz();return;}
-    clearTimeout(qzTimer);clearInterval(qzBarInt);
-    const q=activeGame.qBank[activeGame.qIdx];
-    activeGame.state='question';
-    activeGame.currentAnswers=q.a.map(a=>a.toLowerCase().replace(/\s+/g,''));
-    activeGame.qStart=Date.now();
-    qzMyAnswered=false;
-    qzTimeLeft=QZ_TIME;
-
-    $g('qz-cat-label').textContent=q.cat;
-    $g('qz-prog').textContent='Q '+(activeGame.qIdx+1)+'/'+activeGame.qBank.length;
-    $g('qz-question-text').textContent=q.q;
-    const fb=$g('qz-feedback');fb.textContent='';fb.className='qz-feedback';
-    const inp=$g('qz-text-input');if(inp){inp.disabled=false;inp.value='';inp.focus();}
-
-    // Multiple choice buttons
-    const optsEl=$g('qz-options');
-    optsEl.innerHTML='';
-    if(q.mc){
-      const shuffled=[...q.mc].sort(()=>Math.random()-.5);
-      shuffled.forEach(opt=>{
-        const btn=document.createElement('button');
-        btn.className='qz-opt-btn';
-        btn.textContent=opt;
-        btn.onclick=()=>{
-          if(qzMyAnswered||activeGame?.state!=='question')return;
-          document.querySelectorAll('.qz-opt-btn').forEach(b=>b.classList.add('disabled'));
-          btn.classList.add('selected');
-          const inp=$g('qz-text-input');if(inp)inp.value=opt;
-          handleQuizIncoming(myUsername,opt);
-        };
-        optsEl.appendChild(btn);
-      });
-    }
-
-    // Timer bar
-    const bar=$g('qz-bar');
-    $g('qz-secs').textContent=QZ_TIME;
-    if(bar){bar.style.transition='none';bar.style.width='100%';bar.style.background='#4cc9f0';}
-    setTimeout(()=>{ if(bar){bar.style.transition='width '+QZ_TIME+'s linear';bar.style.width='0%';} },60);
-
-    clearInterval(qzBarInt);
-    qzBarInt=setInterval(()=>{
-      qzTimeLeft--;
-      $g('qz-secs').textContent=qzTimeLeft;
-      if(bar){ if(qzTimeLeft<=4)bar.style.background='#e94560';else if(qzTimeLeft<=8)bar.style.background='#ffb700'; }
-      if(qzTimeLeft<=0){clearInterval(qzBarInt);qzTimeUp();}
-    },1000);
-    clearTimeout(qzTimer);
-    qzTimer=setTimeout(qzTimeUp,(QZ_TIME+1)*1000);
-  }
-
-  function qzTimeUp(){
-    clearTimeout(qzTimer);clearInterval(qzBarInt);
-    if(!activeGame||activeGame.state!=='question')return;
-    const q=activeGame.qBank[activeGame.qIdx];
-    const fb=$g('qz-feedback');
-    if(fb){fb.className='qz-feedback wrong';fb.textContent='⏰ Time\'s up! Answer was: '+q.a[0].toUpperCase();}
-    const inp=$g('qz-text-input');if(inp)inp.disabled=true;
-    document.querySelectorAll('.qz-opt-btn').forEach(btn=>{
-      if(q.a.some(a=>btn.textContent.toLowerCase()===a.toLowerCase()))btn.classList.add('correct');
-    });
-    activeGame.players.forEach(p=>{activeGame.streaks[p]=0;});
-    renderQzScores();
-    activeGame.qIdx++;
-    setTimeout(qzNextQuestion,2600);
-  }
-
-  function handleQuizIncoming(username,msg){
-    if(!activeGame||activeGame.state!=='question')return;
-    const norm=msg.toLowerCase().replace(/\s+/g,'');
-    const hit=activeGame.currentAnswers?.some(a=>norm===a||(a.length>=4&&levenshtein(norm,a)<=1));
-    if(!hit)return;
-    const isMe=username===myUsername;
-    if(isMe&&qzMyAnswered)return;
-    if(isMe)qzMyAnswered=true;
-
-    const elapsed=Math.floor((Date.now()-activeGame.qStart)/1000);
-    const speed=Math.max(0,QZ_TIME-elapsed);
-    const streak=(activeGame.streaks[username]||0)+1;
-    activeGame.streaks[username]=streak;
-    const pts=1+Math.floor(speed/5)+Math.min(streak-1,3);
-    activeGame.scores[username]=(activeGame.scores[username]||0)+pts;
-    activeGame.players.forEach(p=>{if(p!==username)activeGame.streaks[p]=0;});
-
-    if(isMe){
-      clearTimeout(qzTimer);clearInterval(qzBarInt);
-      const fb=$g('qz-feedback');
-      if(fb){fb.className='qz-feedback correct';fb.textContent='✅ Correct! +'+pts+' pts'+(streak>1?' 🔥 Streak ×'+streak:'');}
-      const inp=$g('qz-text-input');if(inp)inp.disabled=true;
-      // highlight correct MC option
-      const q=activeGame.qBank[activeGame.qIdx];
-      document.querySelectorAll('.qz-opt-btn').forEach(btn=>{
-        if(q.a.some(a=>btn.textContent.toLowerCase()===a.toLowerCase()))btn.classList.add('correct');
-        else if(btn.classList.contains('selected'))btn.classList.add('wrong');
-      });
-      renderQzScores();
-      activeGame.qIdx++;
-      setTimeout(qzNextQuestion,2200);
-    } else {
-      // Another player got it first — show in log
-      const fb=$g('qz-feedback');
-      if(fb&&!qzMyAnswered){fb.className='qz-feedback info';fb.textContent=username+' got it first! +'+pts+' pts';}
-      renderQzScores();
-    }
-  }
-
-  function renderQzScores(){
-    const el=$g('qz-scores');if(!el||!activeGame)return;
-    el.innerHTML='';
-    const medals=['🥇','🥈','🥉'];
-    Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]).forEach(([p,s],i)=>{
-      const row=document.createElement('div');
-      row.className='qz-score-row'+(p===myUsername?' me':'');
-      row.innerHTML=`<span>${medals[i]||'  '} ${escapeHtml(p)}</span><span class="qz-pts">${s}${activeGame.streaks[p]>1?' 🔥':''}`;
-      el.appendChild(row);
-    });
-  }
-
-  function endQuiz(){
-    clearTimeout(qzTimer);clearInterval(qzBarInt);
-    if(!activeGame)return;
-    const sorted=Object.entries(activeGame.scores).sort((a,b)=>b[1]-a[1]);
-    $g('qz-question-text').textContent='🏁 Game Over!';
-    $g('qz-options').innerHTML='';
-    const fb=$g('qz-feedback');if(fb){fb.className='qz-feedback correct';fb.textContent='Winner: '+(sorted[0]?.[0]||'?')+' with '+(sorted[0]?.[1]||0)+' pts!';}
-    addSystemMessage('📚 Quiz done! Winner: '+(sorted[0]?.[0]||'?')+' — '+(sorted[0]?.[1]||0)+' pts');
-    activeGame=null;
-    setTimeout(goHide,6000);
-  }
-
-  $g('qz-quit')?.addEventListener('click',()=>{stopAllGames();goHide();});
-
-
-  // ═══════════════════════════════════════════════════════════
-  //  💣  WORD BOMB
-  // ═══════════════════════════════════════════════════════════
-  const WB_SYLS=['ab','ac','ad','al','an','ap','ar','as','at','ba','be','bi','bl','bo','br','bu','ca','ch','cl','co','cr','da','de','di','do','dr','ea','ed','el','en','er','es','ex','fa','fi','fl','fo','fr','ga','gl','go','gr','ha','he','hi','ho','hu','ic','id','im','in','ir','is','it','jo','ju','ka','ke','ki','la','le','li','lo','lu','ma','me','mi','mo','mu','na','ne','ni','no','ob','od','of','om','on','op','or','os','ov','pa','pe','pi','pl','po','pr','pu','ra','re','ri','ro','ru','sa','sc','se','sh','si','sk','sl','sm','sn','so','sp','st','su','sw','ta','te','th','ti','to','tr','tu','un','up','ur','us','va','vi','vo','wa','we','wh','wi','wo','ya','ye','yo'];
-  const WB_DICT=new Set('absolute abandon about above accept across action active actual add admit adopt advance after again against age agree ahead aim air allow almost alone along already also among amount and another any appeal apple apply area argue arm around arrive ask assist attack attempt attend avoid baby back bad ball band bank base basis battle beach bear beat become before begin behind believe below bench between beyond block blood blow board book both bring build burn buy call calm camp care carry case cause certain chance change charge check child city claim class clear climb close code cold common continue copy create crime cross crowd current cycle daily dance dark deal death deep define describe design detail develop direct distance done doubt down draft draw dream drink drive drop each early earth easy edge even event ever examine exist expect extra face fact fail fair fall family fame fast feel field fight file final find fire first flat flow focus food force form found free front full gain game give glad goal good grab grade grand great green grow guide half hand happen hard have head heat help high hill home hope host hour house huge human hunt idea image include indicate input join judge jump keep kind king know land large later lead learn leave less level life light link list live long look lord lose love lucky main make many mark match matter mean mind miss model money month more most move much name nation natural need never next nice night note number object occur offer often open order other over page part path people phone pick plan play point policy post power press print problem process program prove pull push quick race raise reach read ready real reason receive record reflect rely remain report rest result right ring road rock role round rule save scale seek sell send sense series service show sign size skill small smart social some sort space speak spend start state store study system table take task team tell test text time tool total town train trust truth type under unit until upon user usual valid value very view visit voice wait want work world write year zone'.split(' '));
-
-  let wbTimer=null,wbFuseInt=null;
-
-  function launchWordBomb(){
-    goShow('gscreen-wordbomb');
-    activeGame.state='wordbomb';
-    activeGame.lives={};
-    activeGame.usedWords=new Set();
-    activeGame.playerIdx=0;
-    activeGame.players.forEach(p=>{activeGame.lives[p]=3;});
-    renderWbLives();
-    wbNextTurn();
-  }
-
-  function wbNextTurn(){
-    if(!activeGame||activeGame.state!=='wordbomb')return;
-    // skip eliminated players
-    let tries=0;
-    while(activeGame.lives[activeGame.players[activeGame.playerIdx]]<=0&&tries<activeGame.players.length){
-      activeGame.playerIdx=(activeGame.playerIdx+1)%activeGame.players.length; tries++;
-    }
-    activeGame.currentPlayer=activeGame.players[activeGame.playerIdx];
-    activeGame.currentSyl=WB_SYLS[Math.floor(Math.random()*WB_SYLS.length)].toUpperCase();
-
-    $g('wb-syl').textContent=activeGame.currentSyl;
-    const isMe=activeGame.currentPlayer===myUsername;
-    $g('wb-whose-turn').textContent=isMe?'YOUR TURN! 💥':activeGame.currentPlayer+"'s turn";
-    const inputRow=$g('wb-input-row');
-    if(inputRow)inputRow.style.display=isMe?'flex':'none';
-    const inp=$g('wb-text-input');if(inp){inp.value='';if(isMe)setTimeout(()=>inp.focus(),50);}
-    $g('wb-bomb-emoji').className='wb-bomb-anim';
-
-    // Fuse
-    clearTimeout(wbTimer);clearInterval(wbFuseInt);
-    let fuseLeft=100;
-    const fuseEl=$g('wb-fuse-fill');
-    if(fuseEl){fuseEl.style.transition='none';fuseEl.style.width='100%';fuseEl.style.background='#7bed9f';}
-    setTimeout(()=>{ if(fuseEl){fuseEl.style.transition='width 8s linear';fuseEl.style.width='0%';} },60);
-    wbFuseInt=setInterval(()=>{
-      fuseLeft-=12.5;
-      if(fuseLeft<=30&&fuseEl)fuseEl.style.background='#e94560';
-      else if(fuseLeft<=60&&fuseEl)fuseEl.style.background='#ffb700';
-      if(fuseLeft<=0){clearInterval(wbFuseInt);wbExplode();}
-    },1000);
-    wbTimer=setTimeout(wbExplode,9500);
-  }
-
-  function wbExplode(){
-    clearTimeout(wbTimer);clearInterval(wbFuseInt);
-    if(!activeGame||activeGame.state!=='wordbomb')return;
-    const p=activeGame.currentPlayer;
-    activeGame.lives[p]=Math.max(0,(activeGame.lives[p]||0)-1);
-    wbLog('💥 '+p+' exploded! '+(activeGame.lives[p]>0?activeGame.lives[p]+' ❤️ left':'ELIMINATED! 💀'));
-    $g('wb-bomb-emoji').className='wb-bomb-explode';
-    setTimeout(()=>{ if($g('wb-bomb-emoji'))$g('wb-bomb-emoji').className='wb-bomb-anim'; },600);
-    renderWbLives();
-    const alive=activeGame.players.filter(p2=>(activeGame.lives[p2]||0)>0);
-    if(alive.length<=1){endWordBomb(alive[0]);return;}
-    activeGame.playerIdx=(activeGame.playerIdx+1)%activeGame.players.length;
-    setTimeout(wbNextTurn,1400);
-  }
-
-  function wbHandleWord(username,word){
-    if(!activeGame||activeGame.state!=='wordbomb')return;
-    if(username!==activeGame.currentPlayer)return;
-    const lower=word.toLowerCase().trim();
-    const syl=activeGame.currentSyl.toLowerCase();
-    if(!lower.includes(syl)){wbLog('❌ "'+word+'" doesn\'t contain '+activeGame.currentSyl);return;}
-    if(activeGame.usedWords.has(lower)){wbLog('❌ "'+word+'" already used!');return;}
-    if(lower.length<3){wbLog('❌ Too short!');return;}
-    if(lower.length>=3&&lower.length<5&&!WB_DICT.has(lower)){wbLog('❓ "'+word+'" — not recognized, try again');return;}
-    clearTimeout(wbTimer);clearInterval(wbFuseInt);
-    activeGame.usedWords.add(lower);
-    wbLog('✅ '+username+': "'+word.toUpperCase()+'"');
-    activeGame.playerIdx=(activeGame.playerIdx+1)%activeGame.players.length;
-    setTimeout(wbNextTurn,700);
-  }
-
-  $g('wb-submit-btn')?.addEventListener('click',()=>{
-    const inp=$g('wb-text-input');if(!inp)return;
-    const val=inp.value.trim();if(!val)return;
-    inp.value='';
-    socket.emit('chatMessage',{roomName:currentRoom,username:myUsername,message:val,avatar:myAvatar});
-    wbHandleWord(myUsername,val);
-  });
-  $g('wb-text-input')?.addEventListener('keypress',e=>{if(e.key==='Enter')$g('wb-submit-btn')?.click();});
-
-  function renderWbLives(){
-    const el=$g('wb-lives-display');if(!el||!activeGame)return;
-    el.innerHTML='';
-    activeGame.players.forEach(p=>{
-      const lives=activeGame.lives[p]||0;
-      const chip=document.createElement('div');
-      chip.className='wb-player-chip'+(lives<=0?' dead':p===myUsername?' me':'');
-      chip.innerHTML=escapeHtml(p)+' '+'❤️'.repeat(lives)+'🖤'.repeat(Math.max(0,3-lives));
-      el.appendChild(chip);
-    });
-  }
-
-  function wbLog(msg){
-    const el=$g('wb-log');if(!el)return;
-    const d=document.createElement('div');d.className='wb-log-line';d.textContent=msg;
-    el.appendChild(d);el.scrollTop=el.scrollHeight;
-  }
-
-  function endWordBomb(winner){
-    clearTimeout(wbTimer);clearInterval(wbFuseInt);
-    wbLog(winner?'🏆 '+winner+' WINS!':'💣 Everyone exploded!');
-    addSystemMessage('💣 Word Bomb: '+(winner?winner+' wins!':'Draw!'));
-    const inputRow=$g('wb-input-row');if(inputRow)inputRow.style.display='none';
-    activeGame=null;
-    setTimeout(goHide,4000);
-  }
-
-  $g('wb-quit')?.addEventListener('click',()=>{stopAllGames();goHide();});
 
 
   // ═══════════════════════════════════════════════════════════
@@ -3363,178 +2652,6 @@ document.addEventListener('DOMContentLoaded', () => {
     drawScanlines(ctx,cw,ch);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  //  🐍  SNAKE RACE  (2-player grid snake)
-  // ═══════════════════════════════════════════════════════════
-  let snakeRAF=null,snakeState=null;
-
-  function launchSnake(){
-    goShow('gscreen-snake');activeGame.state='playing';
-    const p1n=activeGame.players[0]||'P1',p2n=activeGame.players[1]||'CPU';
-    $g('snake-p1-name').textContent=p1n;$g('snake-p2-name').textContent=p2n;
-    const canvas=$g('snake-canvas');if(!canvas)return;
-    const ctx=canvas.getContext('2d'),wrap=canvas.parentElement;
-    const COLS=40,ROWS=28,TICK_MS=110;
-    let cs=16;
-    function resizeSN(){const r=canvas.getBoundingClientRect();canvas.width=r.width||wrap.clientWidth||window.innerWidth;canvas.height=r.height||wrap.clientHeight||(window.innerHeight-60);cs=Math.max(8,Math.min(Math.floor(canvas.width/COLS),Math.floor(canvas.height/ROWS)));}
-    resizeSN();window.addEventListener('resize',resizeSN);
-    const mkSnake=(x,y,d,c,name,isMe,isCpu)=>({body:[{x,y},{x:x-d.x,y:y-d.y},{x:x-d.x*2,y:y-d.y*2}],dir:d,nextDir:d,color:c,alive:true,score:0,playerName:name,isMe,isCpu:!!isCpu});
-    const occ=snakes=>new Set(snakes.flatMap(s=>s.body.map(b=>b.x+','+b.y)));
-    function spawnApple(snakes){let p;do{p={x:Math.floor(Math.random()*COLS),y:Math.floor(Math.random()*ROWS)};}while(occ(snakes).has(p.x+','+p.y));return p;}
-    const cpuMode2=activeGame.players.length<2;const p2name2=cpuMode2?'CPU':p2n;
-    const s1=mkSnake(5,14,{x:1,y:0},'#7bed9f',p1n,p1n===myUsername,false);
-    const s2=mkSnake(34,13,{x:-1,y:0},'#ffd700',p2name2,p2n===myUsername,cpuMode2);
-    const cpuMode=cpuMode2;
-    snakeState={snakes:[s1,s2],apples:[],keys:{},over:false,s1IsMe:p1n===myUsername,s2IsMe:p2n===myUsername,cpuMode};
-    for(let i=0;i<5;i++)snakeState.apples.push(spawnApple(snakeState.snakes));
-    const onKD=e=>{snakeState.keys[e.key]=true;if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault();};
-    const onKU=e=>{delete snakeState.keys[e.key];};
-    window.addEventListener('keydown',onKD);window.addEventListener('keyup',onKU);
-    const chDir=(sn,d)=>{if(d.x!==0&&sn.dir.x===0||d.y!==0&&sn.dir.y===0)sn.nextDir=d;};
-    const tickInt=setInterval(()=>{
-      if(!snakeState||snakeState.over){clearInterval(tickInt);return;}
-      const st=snakeState,k=st.keys,[sn1,sn2]=st.snakes;
-      // Read local input and broadcast direction to host
-      if(st.s1IsMe){
-        if(k['w']||k['W'])chDir(sn1,{x:0,y:-1});else if(k['s']||k['S'])chDir(sn1,{x:0,y:1});
-        else if(k['a']||k['A'])chDir(sn1,{x:-1,y:0});else if(k['d']||k['D'])chDir(sn1,{x:1,y:0});
-        if(myRole!=='owner') socket.emit('gameState',{roomName:currentRoom,game:'snake',payload:{username:myUsername,idx:0,dir:sn1.nextDir}});
-      }
-      if(!cpuMode&&st.s2IsMe){
-        if(k['ArrowUp'])chDir(sn2,{x:0,y:-1});else if(k['ArrowDown'])chDir(sn2,{x:0,y:1});
-        else if(k['ArrowLeft'])chDir(sn2,{x:-1,y:0});else if(k['ArrowRight'])chDir(sn2,{x:1,y:0});
-        if(myRole!=='owner') socket.emit('gameState',{roomName:currentRoom,game:'snake',payload:{username:myUsername,idx:1,dir:sn2.nextDir}});
-      }
-      // Non-host: skip physics, just wait for state from host
-      if(myRole!=='owner') return;
-      // CPU movement
-      if(cpuMode){
-        const h=sn2.body[0],near=st.apples.length?st.apples.reduce((b,a)=>Math.abs(a.x-h.x)+Math.abs(a.y-h.y)<b.d?{a,d:Math.abs(a.x-h.x)+Math.abs(a.y-h.y)}:b,{a:st.apples[0],d:Infinity}).a:null;
-        if(near){const dx=Math.sign(near.x-h.x),dy=Math.sign(near.y-h.y);if(dx&&sn2.dir.x!=-dx)chDir(sn2,{x:dx,y:0});else if(dy&&sn2.dir.y!=-dy)chDir(sn2,{x:0,y:dy});}
-      }
-      [sn1,sn2].forEach(sn=>{
-        if(!sn.alive)return;
-        sn.dir=sn.nextDir;
-        const h=sn.body[0];const nh={x:(h.x+sn.dir.x+COLS)%COLS,y:(h.y+sn.dir.y+ROWS)%ROWS};
-        sn.body.unshift(nh);
-        const ai=st.apples.findIndex(a=>a.x===nh.x&&a.y===nh.y);
-        if(ai>=0){sn.score++;st.apples.splice(ai,1);st.apples.push(spawnApple(st.snakes));}
-        else sn.body.pop();
-        if(sn.body.slice(1).some(b=>b.x===nh.x&&b.y===nh.y))sn.alive=false;
-      });
-      const h1=sn1.body[0],h2=sn2.body[0];
-      if(sn1.alive&&sn2.alive&&h1.x===h2.x&&h1.y===h2.y){sn1.alive=false;sn2.alive=false;}
-      if(sn1.alive&&sn2.body.slice(1).some(b=>b.x===h1.x&&b.y===h1.y))sn1.alive=false;
-      if(sn2.alive&&sn1.body.slice(1).some(b=>b.x===h2.x&&b.y===h2.y))sn2.alive=false;
-      $g('snake-p1-len').textContent=sn1.score;$g('snake-p2-len').textContent=sn2.score;
-      // Host broadcasts full state to all clients
-      socket.emit('gameState',{roomName:currentRoom,game:'snake',payload:{
-        fullState:true,
-        s1:{body:sn1.body,dir:sn1.dir,nextDir:sn1.nextDir,score:sn1.score,alive:sn1.alive},
-        s2:{body:sn2.body,dir:sn2.dir,nextDir:sn2.nextDir,score:sn2.score,alive:sn2.alive},
-        apples:st.apples
-      }});
-      if(!sn1.alive||!sn2.alive){
-        st.over=true;
-        const w=sn1.score>sn2.score?p1n:sn2.score>sn1.score?p2n:'TIE';
-        addSystemMessage('🐍 Snake Race: '+(w==='TIE'?"It's a tie!":(w+' wins with '+Math.max(sn1.score,sn2.score)+' apples!')));
-        activeGame=null;setTimeout(()=>{cancelAnimationFrame(snakeRAF);goHide();},4000);
-      }
-    },TICK_MS);
-    function snakeLoop(){
-      if(!snakeState)return;
-      const st=snakeState,cw=canvas.width,ch=canvas.height;
-      const offX=Math.floor((cw-COLS*cs)/2),offY=Math.floor((ch-ROWS*cs)/2);
-      ctx.fillStyle='#020a02';ctx.fillRect(0,0,cw,ch);
-      ctx.fillStyle='rgba(255,255,255,0.03)';
-      for(let x=0;x<COLS;x++)for(let y=0;y<ROWS;y++)ctx.fillRect(offX+x*cs+cs/2-1,offY+y*cs+cs/2-1,2,2);
-      ctx.strokeStyle='rgba(255,255,255,0.08)';ctx.lineWidth=2;ctx.strokeRect(offX-1,offY-1,COLS*cs+2,ROWS*cs+2);
-      st.apples.forEach(a=>{ctx.fillStyle='#e94560';ctx.shadowColor='#e94560';ctx.shadowBlur=cs*0.7;ctx.fillRect(offX+a.x*cs+2,offY+a.y*cs+2,cs-4,cs-4);ctx.shadowBlur=0;});
-      st.snakes.forEach(sn=>{sn.body.forEach((seg,i)=>{ctx.globalAlpha=sn.alive?(1-i/sn.body.length*0.5):0.25;if(i===0){ctx.shadowColor=sn.color;ctx.shadowBlur=cs*0.7;}ctx.fillStyle=sn.color;ctx.fillRect(offX+seg.x*cs+1,offY+seg.y*cs+1,cs-2,cs-2);ctx.shadowBlur=0;});ctx.globalAlpha=1;});
-      if(st.over){ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(offX,offY,COLS*cs,ROWS*cs);const [sn1,sn2]=st.snakes;const w=sn1.score>sn2.score?p1n:sn2.score>sn1.score?p2n:'TIE!';ctx.fillStyle='#ffd700';ctx.font=Math.max(10,cs*1.3)+"px 'Press Start 2P',monospace";ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(w==='TIE!'?'TIE!':(w+' WINS!'),offX+COLS*cs/2,offY+ROWS*cs/2);}
-      drawScanlines(ctx,cw,ch);
-      snakeRAF=requestAnimationFrame(snakeLoop);
-    }
-    snakeRAF=requestAnimationFrame(snakeLoop);
-    $g('snake-quit')?.addEventListener('click',()=>{cancelAnimationFrame(snakeRAF);snakeRAF=null;clearInterval(tickInt);window.removeEventListener('keydown',onKD);window.removeEventListener('keyup',onKU);activeGame=null;goHide();});
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  //  ⌨️  TYPING SPRINT  (type the most words in 60 sec)
-  // ═══════════════════════════════════════════════════════════
-  let typingState=null;
-  const TYPING_WORDS=['the','quick','brown','fox','jumps','over','lazy','dog','pixel','art','chat','room','game','code','type','fast','wave','fire','moon','star','blue','green','light','dark','space','blast','crash','ninja','ghost','neon','cyber','glitch','quest','power','ultra','hyper','retro','arcade','score','combo','turbo','spark','flame','storm','flash','blade','sword','shield','magic','potion','dungeon','castle','dragon','wizard','knight','arrow','forest','river','cloud','thunder','lightning','rainbow','crystal','diamond','keyboard','monitor','window','folder','server','client','socket','buffer','stream','cache','async','await','promise','fetch','render','export','import','module','class','function','variable','constant','boolean','integer','string','object','array','index','shift','splice','reduce','filter','while','loop','break','return'];
-
-  function launchTyping(){
-    goShow('gscreen-typing');activeGame.state='playing';
-    const words=[];
-    while(words.length<200)words.push(TYPING_WORDS[Math.floor(Math.random()*TYPING_WORDS.length)]);
-    typingState={words,cursor:0,charIdx:0,scores:{},timeLeft:60,started:false,over:false};
-    activeGame.players.forEach(p=>{typingState.scores[p]={wpm:0,words:0,errors:0};});
-    const bar=$g('ty-scores-bar');
-    if(bar){bar.innerHTML='';const cols=['#4cc9f0','#e94560','#7bed9f','#ffd700','#a29bfe'];activeGame.players.forEach((p,i)=>{const el=document.createElement('span');el.className='ty-player-stat';el.id='ty-stat-'+i;el.style.borderColor=cols[i%cols.length];el.style.color=cols[i%cols.length];el.textContent=p+': 0 WPM';bar.appendChild(el);});}
-    renderTypingDisplay();
-    const inp=$g('ty-input');
-    if(inp){
-      inp.value='';inp.disabled=false;inp.focus();
-      inp.oninput=e=>{
-        if(typingState.over)return;
-        if(!typingState.started){typingState.started=true;startTypingTimer();}
-        const val=e.target.value;
-        if(val.endsWith(' ')){
-          const typed=val.trim(),cur=typingState.words[typingState.cursor];
-          if(typed===cur)typingState.scores[myUsername]&&typingState.scores[myUsername].words++;
-          else typingState.scores[myUsername]&&typingState.scores[myUsername].errors++;
-          typingState.cursor++;typingState.charIdx=0;inp.value='';
-        }else{typingState.charIdx=val.length;}
-        renderTypingDisplay();updateTypingScores();
-      };
-    }
-    $g('ty-quit')?.addEventListener('click',()=>{if(typingState)typingState.over=true;activeGame=null;goHide();});
-  }
-
-  function renderTypingDisplay(){
-    const st=typingState;if(!st)return;
-    const el=$g('ty-text-display');if(!el)return;
-    const start=Math.max(0,st.cursor-3),end=Math.min(st.words.length,st.cursor+30);
-    el.innerHTML='';
-    for(let w=start;w<end;w++){
-      const wd=st.words[w],wEl=document.createElement('span');wEl.style.marginRight='6px';
-      for(let c=0;c<wd.length;c++){const sp=document.createElement('span');sp.textContent=wd[c];sp.className='ty-char'+(w<st.cursor?' correct':w===st.cursor&&c===st.charIdx?' cursor':'');wEl.appendChild(sp);}
-      const spc=document.createElement('span');spc.textContent=' ';spc.className='ty-char'+(w<st.cursor?' correct':'');wEl.appendChild(spc);
-      el.appendChild(wEl);
-    }
-  }
-
-  function startTypingTimer(){
-    const iv=setInterval(()=>{
-      if(!typingState||typingState.over){clearInterval(iv);return;}
-      typingState.timeLeft--;
-      const el=$g('ty-timer');if(el){el.textContent=typingState.timeLeft;el.style.color=typingState.timeLeft<=10?'#e94560':'#ffb700';}
-      updateTypingScores();
-      if(typingState.timeLeft<=0){
-        clearInterval(iv);typingState.over=true;
-        const inp=$g('ty-input');if(inp)inp.disabled=true;
-        const ranked=Object.entries(typingState.scores).sort((a,b)=>b[1].words-a[1].words);
-        const win=ranked[0];
-        addSystemMessage('⌨️ Typing Sprint: '+win[0]+' wins with '+win[1].wpm+' WPM!');
-        const fb=$g('ty-feedback');if(fb){fb.textContent='🏁 '+win[0].toUpperCase()+' WINS — '+win[1].wpm+' WPM!';fb.style.color='#ffd700';}
-        activeGame=null;setTimeout(goHide,5000);
-      }
-    },1000);
-  }
-
-  function updateTypingScores(){
-    if(!typingState)return;
-    const elapsed=60-typingState.timeLeft;
-    const my=typingState.scores[myUsername];
-    if(my&&elapsed>0)my.wpm=Math.round(my.words/elapsed*60);
-    activeGame?.players?.forEach((p,i)=>{const el=$g('ty-stat-'+i);if(!el)return;const sc=typingState.scores[p];if(sc)el.textContent=p+': '+sc.wpm+' WPM ('+sc.words+'w)';});
-  }
-
-  // ── Pixel-art scanline overlay (drawn over finished canvas frame) ──
-  // Cached scanline overlay canvas for performance
-  let _scanlineCache = null, _scanlineCacheW = 0, _scanlineCacheH = 0;
   function drawScanlines(ctx, w, h) {
     // Rebuild cache only when size changes
     if (!_scanlineCache || _scanlineCacheW !== w || _scanlineCacheH !== h) {
